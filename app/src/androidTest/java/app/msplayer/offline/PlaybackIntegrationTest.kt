@@ -239,7 +239,7 @@ class PlaybackIntegrationTest {
             service.subtitleDelay(300)
             assertEquals(300000L, service.player.spuDelay)
             service.pause()
-            service.subtitleStyle(SubtitleStyle(size = 3, bold = true, outline = 4, shadow = 128))
+            service.subtitleStyle(SubtitleStyle(size = 27, bold = true, outline = 4, shadow = 128))
         }
         awaitCondition {
             service.state.value.subtitleDelay == 300L &&

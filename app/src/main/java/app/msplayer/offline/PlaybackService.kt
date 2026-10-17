@@ -391,6 +391,11 @@ class PlaybackService : Service() {
                             player.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, path, false)
                         }
                         refreshTracks()
+                        // IDs belong to the same reopened media, never a sorted-track index.
+                        if (state.value.audioTracks.any { it.first == prior.audioTrack }) player.setAudioTrack(prior.audioTrack)
+                        if (state.value.subtitles.any { it.first == prior.subtitleTrack }) player.setSpuTrack(prior.subtitleTrack)
+                        state.value = state.value.copy(audioTrack=player.audioTrack, subtitleTrack=player.spuTrack)
+                        updateSubtitleKind()
                         player.rate = prior.rate
                         player.setAudioDelay(prior.audioDelay * 1000)
                         player.setSpuDelay(prior.subtitleDelay * 1000)
@@ -764,10 +769,15 @@ class PlaybackService : Service() {
 
     /** FreeType is configured at LibVLC construction, so reopen the current item in place. */
     fun subtitleStyle(style: SubtitleStyle) {
+        val previous = SubtitleStyle.load(this)
+        if (previous == style) return
+        style.save(this)
+        if (previous.options() == style.options()) {
+            updateSubtitlePlacement(controlsVisible)
+            return
+        }
         endTemporarySpeed()
         val prior = state.value.copy(playing = state.value.playing && !requestedPause)
-        if (SubtitleStyle.load(this) == style) return
-        style.save(this)
         if (prior.item == null) return
         opening?.cancel()
         pendingStyleRestore = prior

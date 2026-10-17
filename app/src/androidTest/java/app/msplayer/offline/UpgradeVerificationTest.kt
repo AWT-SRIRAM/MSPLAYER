@@ -24,14 +24,14 @@ class UpgradeVerificationTest {
             dao.add(PlaylistEntry().apply { playlist = "Upgrade verification"; this.uri = uri; title = "Upgrade playlist"; added = 1 })
         } else {
             assertEquals("verify", phase)
-            assertEquals("0.4.0", version)
+            assertEquals("0.5.0", version)
             assertEquals(12345L, dao.saved(uri)!!.position)
             assertTrue(dao.entries("Upgrade verification").any { it.uri == uri })
             assertEquals("Software", prefs.getString("decoder", ""))
             assertFalse(prefs.getBoolean("resume", true))
-            assertEquals(4, prefs.getInt("subtitle_style_version", 0))
-            assertEquals(1, prefs.getInt("subtitle_outline", 0))
-            assertEquals(6, prefs.getInt("subtitle_bottom_percent", 0))
+            assertEquals(5, prefs.getInt("subtitle_style_version", 0))
+            assertEquals(0, SubtitleStyle.load(context).outline)
+            assertEquals(0, SubtitleStyle.load(context).bottomMargin)
         }
     }
 }

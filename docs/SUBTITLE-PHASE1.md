@@ -1,0 +1,3 @@
+# Phase 1 verification
+
+Build, 16 JVM tests, lint: passed. Physical API 36 debug instrumentation SubtitleUpgradeTest: passed. Exact old default migration and all ten size-step mappings are checked. Position-only changes preserve LibVLC/MediaPlayer identities; paused intent survives a real appearance rebuild. Native alpha failed Phase 0, so fade remains deferred. Exact font metrics, authored formats, and final paired calibration remain for subsequent phases.

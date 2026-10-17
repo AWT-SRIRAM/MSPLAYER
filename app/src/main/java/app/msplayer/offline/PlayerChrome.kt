@@ -245,7 +245,7 @@ fun SubtitleStyleControls(style: SubtitleStyle, onChange: (SubtitleStyle) -> Uni
 
     Slider(value = style.size.toFloat(), onValueChange = { onChange(style.copy(size = it.toInt())) },
 
-        valueRange = 0f..4f, steps = 3)
+        valueRange = 10f..60f, steps = 49)
 
     Row(verticalAlignment = Alignment.CenterVertically) {
 
@@ -273,7 +273,7 @@ fun SubtitleStyleControls(style: SubtitleStyle, onChange: (SubtitleStyle) -> Uni
 
         onValueChange = { onChange(style.copy(bottomMargin = it.toInt(), legacyMargin = null)) },
 
-        valueRange = 0f..25f)
+        valueRange = 0f..40f)
 
     TextButton(onClick = { onChange(SubtitleStyle()) }) { Text("Reset subtitle appearance") }
 

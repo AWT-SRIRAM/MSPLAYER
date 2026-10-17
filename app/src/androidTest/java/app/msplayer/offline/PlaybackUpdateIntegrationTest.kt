@@ -49,7 +49,7 @@ class PlaybackUpdateIntegrationTest {
         instrumentation.runOnMainSync {
             surface = activity!!.findViewById(org.videolan.R.id.surface_subtitles)
             hidden = surface!!.translationY
-            assertTrue(hidden < 0f)
+            assertEquals(0f, hidden, .01f)
             activity!!.playerControlsVisible = true
         }
         Thread.sleep(300)
