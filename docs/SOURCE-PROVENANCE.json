@@ -1,0 +1,271 @@
+{
+  "source_release": "0.4.0",
+  "source_archive_sha256": "4C964B5DC232FF19337EC15237BA8B4F7178DE39EE53E35CF9A71386E957BE5D",
+  "unchanged_files": [
+    {
+      "path": "app/build.gradle.kts",
+      "sha256": "04c9884949a910dd0730c1970049f484536a72c2a184c03a58ac009bb59d002d"
+    },
+    {
+      "path": "app/src/androidTest/assets/high-bitrate-hevc.mkv",
+      "sha256": "050589bf6d2d8c6647b3c3a841edc56be1123ba03950515266ae9b6f9612ab5f"
+    },
+    {
+      "path": "app/src/androidTest/assets/multi-track.mkv",
+      "sha256": "cee0d9c43bfca7b9edd8c3451758f0890f5495df0cbbd1099945eea4b0dd5c60"
+    },
+    {
+      "path": "app/src/androidTest/assets/multilingual.srt",
+      "sha256": "55e951f77b9d181f7ef0d0e13dddda9180cfb2dc852a79f0a4a6da285eccc09f"
+    },
+    {
+      "path": "app/src/androidTest/assets/music-test.mp3",
+      "sha256": "3289a54174d5e8d1207bcf209b21c785688990ae52243d41fbfa0c587007f7fd"
+    },
+    {
+      "path": "app/src/androidTest/assets/pgs-sample.mkv",
+      "sha256": "e6c8f93f57d0371603704d7e7b16933e6c4c5df669da42b42a2a84de881e0f27"
+    },
+    {
+      "path": "app/src/androidTest/assets/portrait.mp4",
+      "sha256": "76a233016573a6eda893cc19d8015cd62e31866da288b1d58160c71268e7d3ba"
+    },
+    {
+      "path": "app/src/androidTest/assets/rotated-portrait.mp4",
+      "sha256": "bb092a335f1d18e3ae2a12d583232024e0a7dae630f3a61d8eeea567e11986bd"
+    },
+    {
+      "path": "app/src/androidTest/assets/sample-eac3.mkv",
+      "sha256": "4c7c03de8a0d0be2f8853aaf90f3072a12026cc1490b186fc6f2faf9d253e454"
+    },
+    {
+      "path": "app/src/androidTest/assets/test.ass",
+      "sha256": "c32fcd3f022d5844a0700246bd5a13a4ab2decfed42e54b983e69c26807cae1c"
+    },
+    {
+      "path": "app/src/androidTest/assets/test.srt",
+      "sha256": "fe4b9d0629a1a03bce1144e35a5edb57540165944a32475811ee8caa8003b4d1"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/PlaybackIntegrationTest.kt",
+      "sha256": "71566efc040c7afe03064c76cb1285b9e775f5265b51d14d72decef3fd8aeda6"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/PlaybackRepairIntegrationTest.kt",
+      "sha256": "1be304dfd63351c7e09ff025c8ff40a6b26604574ae65a0b13a3ad6989787d4c"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/PlaybackUpdateIntegrationTest.kt",
+      "sha256": "a93c5d87f5d95145cb695470e7fb13f1c368938ab6b9689e5b1ce1109e2ffc65"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/Player040IntegrationTest.kt",
+      "sha256": "87b41c2e1cd4a0429d2bfcdb5566bb2466c71d766eef1d680aea8d80d99e3d22"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/PlayerVisualIntegrationTest.kt",
+      "sha256": "c72f8483dd41c5d48d367e4a900ef9fdcce9c849bfc10e6193e9b0459bc86060"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/SubtitleRenderingVerificationTest.kt",
+      "sha256": "29e019bbce0955778c22d023a8836bfefec21fd22e0b2c0262bfbdb7500cd981"
+    },
+    {
+      "path": "app/src/androidTest/java/app/msplayer/offline/UpgradeVerificationTest.kt",
+      "sha256": "f4d761e3613cefb2dda2dc9a931f71f53d950a2088ff6001dbdc0b0c96a32f2e"
+    },
+    {
+      "path": "app/src/main/AndroidManifest.xml",
+      "sha256": "085fbe5f74956b0a555ee6e064990abb753a90cf5ae526c00905599e0a148e0d"
+    },
+    {
+      "path": "app/src/main/assets/licenses/Apache-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "app/src/main/assets/licenses/LGPL-2.1.txt",
+      "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95"
+    },
+    {
+      "path": "app/src/main/assets/licenses/LLVM-libcxx-LICENSE.txt",
+      "sha256": "a7de191338d328257ecec5ba1ea971ebd67633d0b4fce7d6272a39749547ec6b"
+    },
+    {
+      "path": "app/src/main/assets/licenses/Third-party-notices.txt",
+      "sha256": "cb03d699a98e96f7e11689477840a383a1479fe3a5eed0b0eb271ac1318f9cc2"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/AudioEffects.kt",
+      "sha256": "c2baaa6852739e20979870950e8c183142781304d91b84a6813d4925dacbe381"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/Library.kt",
+      "sha256": "4623b7c2225cb81aa7fd7247eb04ee7705bc59645e2433e7b67f3f14096d8ca5"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/MainActivity.kt",
+      "sha256": "ad02c534d1b108a1b2cdac0616eb62040de7172badfd3d362e56995f08cfe428"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/MusicPlayer.kt",
+      "sha256": "74686efbf86ef2633e1e135287c006fd555c00a2dbcda9745289ea4d7016e1b9"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/NativeThumbnail.kt",
+      "sha256": "e649981cb9692524854885d423d41cdc0385ae4896ce3f6c953439de4844c25b"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlaybackDiagnostics.kt",
+      "sha256": "90364a9ad3e6a4a58af0a0b24ffaae50dc6f17e7cbb49a34f7859a9b209964c8"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlaybackRules.kt",
+      "sha256": "9cf3c9121fc729206fda44e0163bbc62d1a0bb36f3d69c07ffe003e1726eaeed"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlaybackService.kt",
+      "sha256": "3ff114f57666c2eaff548fe7c11269d9910eaedafbb581f8e4f6411b65966c66"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlayerChrome.kt",
+      "sha256": "ac4f037637edd5760ddda463b8a900a5b476a099ef55155e815b0822fe45271a"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlayerDao.java",
+      "sha256": "88f0059d10019de60c2559beabee0a53e2e4cea0f67b8d58c92aebda29c4820c"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlayerDatabase.java",
+      "sha256": "526968226c9316303df10b290d6da4044d814810ad1e9f7c37b7238a8556bb26"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlayerGestures.kt",
+      "sha256": "498ed5743da8c3c0859b60ca4424511b1641cd842a5a2ddba90844aab8b29f1b"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/PlaylistEntry.java",
+      "sha256": "0210d5bc3c14c95072744fd6040344d19aac92caeb8b55402d73851c951d5439"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/SavedMedia.java",
+      "sha256": "a206a0ae57519ee1715ba2404131a9ffb322332bf05cabea93a4614bfb8ded74"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/SubtitleFonts.kt",
+      "sha256": "0c81673c0ce8ab310290ce847111917822fe86ee9e05a2280051feea073c5f3a"
+    },
+    {
+      "path": "app/src/main/java/app/msplayer/offline/SubtitleStyle.kt",
+      "sha256": "235dcec2e9b32f29ee59b3419ee416c49a5a2e51d8b2d0df5fe039277877014f"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher.xml",
+      "sha256": "4a8d872e06a6a338ffce472afba10f8d2074a022774bc4778b91abe482620a63"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_ms_play_foreground.xml",
+      "sha256": "cfb541c9d7a5dad80d98dabfe4f13a7b8ad288d6a0c946342fe12bf2ad8338f7"
+    },
+    {
+      "path": "app/src/main/res/mipmap-anydpi-v26/ic_ms_logo.xml",
+      "sha256": "ac11992796bcb52012707daacda5229044a3ffe3c6c26e0f3ab0c0d866ec907a"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xxxhdpi/ic_ms_logo.png",
+      "sha256": "f8a94f97be4eeea30540b5be69667dc7b93b5d73330938e91afd35a4523a15ad"
+    },
+    {
+      "path": "app/src/main/res/values/icon_colors.xml",
+      "sha256": "e9780d266d636143ddf59a4b6c569e0a298cdcc3b8cf3005f6eff77770616df1"
+    },
+    {
+      "path": "app/src/main/res/values/styles.xml",
+      "sha256": "aee280276660fe85eef7c453064cb34da6e9a71c57cd84122af941790be2117d"
+    },
+    {
+      "path": "app/src/main/res/xml/data_extraction_rules.xml",
+      "sha256": "8be827692b21716f2b24280ccf1970ed9bb9768bc8fd7b59ab30c7e4a37ef489"
+    },
+    {
+      "path": "app/src/test/java/app/msplayer/offline/PlaybackRepairTest.kt",
+      "sha256": "a2ab1f390683481f7adaacb012dbb340390b5b9cfad768376cd442f7e849c568"
+    },
+    {
+      "path": "app/src/test/java/app/msplayer/offline/PlaybackRulesTest.kt",
+      "sha256": "f97c9ca8a8e77ce3e87801e5b4de35cbdd5060c10d5cd467b87bca6ccba34fce"
+    },
+    {
+      "path": "app/src/test/java/app/msplayer/offline/PlaybackUpdateTest.kt",
+      "sha256": "c9aeefb948d71ab2680ad348852a9c1b09a5e85e3ef110f3472be173471f0300"
+    },
+    {
+      "path": "app/src/test/java/app/msplayer/offline/Player040RulesTest.kt",
+      "sha256": "676b21bf4131779805a0604e3275da7133ef9aac1701d0828f79ed93964040ae"
+    },
+    {
+      "path": "app/src/test/java/app/msplayer/offline/SubtitleStyleTest.kt",
+      "sha256": "d5e1e35682475f868a716605c84c04884acce55e7f424e9ec1ee8c4613a0412e"
+    },
+    {
+      "path": "build.gradle.kts",
+      "sha256": "414de4094513f321e3ea90ea126207b969071943ce262c6cd46bbcca20137711"
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.jar",
+      "sha256": "2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046"
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "sha256": "e27ab3561a35f7edf2d40fc2d4d25f85daf14cde35dd0f5b44a2ce3220de5dca"
+    },
+    {
+      "path": "gradle.properties",
+      "sha256": "203defb2b03f34d19dd04ae630e4b4d52031a19d992ef14142e0e34d9f0dfbe8"
+    },
+    {
+      "path": "gradlew",
+      "sha256": "a3648413b47ef77af21d5ebc36c687c7d103aaef3e17f33de7d4f080a6f300a3"
+    },
+    {
+      "path": "gradlew.bat",
+      "sha256": "57931b17dd228e5c24dac90e815d0bf82477e831a4618dfab4136f5446b42a9f"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "61d4039dda0a7c24f1136711bfc85e5f124f2d2858c3b3fa0f0106f3804708fc"
+    },
+    {
+      "path": "settings.gradle.kts",
+      "sha256": "7e712368f3b2e84456d3a16ec2c37f11e23afb9dedc7500a9eaf78e6a91845c2"
+    },
+    {
+      "path": "THIRD-PARTY-NOTICES.md",
+      "sha256": "0558746cfca9abe11be7511b72b04adb48d79fee95dd8cd5493ba63790574157"
+    },
+    {
+      "path": "third_party/libvlc-sources.jar",
+      "sha256": "a6ba4732437f1f5359ea4cf44e65a283e245d2fc41b77a1c9784d565b288c407"
+    },
+    {
+      "path": "third_party/libvlc.pom",
+      "sha256": "5e81e13a260430ac4d9376d702767258570015ea85790f5b0036077d2f7b7aa6"
+    },
+    {
+      "path": "third_party/libvlcjni-3.7.7-source.zip",
+      "sha256": "a1c26e6e81d7a86d05b78067e025750c9d24a0c82e9a309d6c251bcfd8f2773e"
+    },
+    {
+      "path": "third_party/LLVM-libcxx-LICENSE.txt",
+      "sha256": "a7de191338d328257ecec5ba1ea971ebd67633d0b4fce7d6272a39749547ec6b"
+    },
+    {
+      "path": "third_party/vlc-native-source.zip",
+      "sha256": "ec8b62ee8e0ca0c9048a7bf535f05ebe36dec68832da4debd325b4a9d6083871"
+    }
+  ],
+  "publication_changes": [
+    "README.md",
+    ".gitignore",
+    "docs/"
+  ]
+}
