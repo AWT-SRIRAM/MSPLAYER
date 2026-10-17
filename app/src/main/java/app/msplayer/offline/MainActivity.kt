@@ -56,6 +56,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.videolan.libvlc.MediaPlayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import org.videolan.libvlc.util.VLCVideoLayout
 
 val Accent = Color(0xFF00A8FF)
@@ -1860,7 +1862,7 @@ fun PlayerTimeline(service: PlaybackService, dragPosition: Long?, onDrag: (Long?
     var sliderTarget by remember(service) { mutableStateOf<Long?>(null) }
     LaunchedEffect(state.seekable) { if (!state.seekable) { sliderTarget = null; onDrag(null) } }
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp).onGloballyPositioned { service.subtitleControlsTop(it.positionInWindow().y) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(durationText(sliderTarget ?: dragPosition ?: state.position), fontSize = 14.sp)

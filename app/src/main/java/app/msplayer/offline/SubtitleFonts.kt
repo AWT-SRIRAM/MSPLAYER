@@ -7,6 +7,7 @@ import org.xmlpull.v1.XmlPullParser
 data class SubtitleFont(val label: String, val family: String, val available: Boolean, val forceBold: Boolean = false)
 object SubtitleFonts {
     private data class Family(val name:String,val faces:MutableList<String> = mutableListOf())
+    private var oldRobotoFamily: String? = null
     private val installed: List<SubtitleFont> by lazy {
         // Use Android's actual family mapping; a font file's existence alone is insufficient.
         val families=mutableListOf<Family>()
@@ -30,7 +31,9 @@ object SubtitleFonts {
             }
         }
         fun match(name:String)=families.firstOrNull { f -> f.faces.any { it.contains(name) } }
-        val roboto=match("roboto");val droid=match("droidsans");val arial=match("arial")
+        oldRobotoFamily=match("roboto")?.name
+        // A condensed family containing Roboto files is not the regular Roboto choice.
+        val roboto=families.firstOrNull { f -> !f.name.contains("condensed",true) && f.faces.any {it.contains("roboto")} };val droid=match("droidsans");val arial=match("arial")
         listOf(
             SubtitleFont("Default", "", true),
             SubtitleFont("Sans Serif", "sans-serif", true),
@@ -40,6 +43,7 @@ object SubtitleFonts {
             SubtitleFont("Arial Bold", arial?.name ?: "Arial", arial!=null, true),
         )
     }
+    fun legacyRobotoFamily(): String? { choices();return oldRobotoFamily }
     fun choices() = installed
     fun resolve(label: String) = choices().firstOrNull { it.label == label && it.available } ?: choices().first()
 }

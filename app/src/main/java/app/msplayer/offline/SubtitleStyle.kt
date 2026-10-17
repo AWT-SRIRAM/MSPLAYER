@@ -7,14 +7,14 @@ import kotlin.math.roundToInt
 data class SubtitleStyle(
     val size: Int = 23, val bold: Boolean = true, val outline: Int = 0,
     val shadow: Int = 140, val bottomMargin: Int = 0, val legacyMargin: Int? = null,
-    val font: String = "Roboto", val scale: Int = 100,
+    val font: String = "Default", val scale: Int = 100,
     val color: Int = 0xFFFFFF, val background: Boolean = false,
     val backgroundColor: Int = 0, val backgroundOpacity: Int = 128,
     val borderColor: Int = 0, val borderOpacity: Int = 204,
-    val encoding: String = "",
+    val encoding: String = "", val compensateNativeInset: Boolean = true, val legacyFontFamily: String? = null,
 ) {
     val textScale: Int get() = (scale.coerceIn(50, 300) * size.coerceIn(10, 60) / 23f).roundToInt().coerceIn(10, 500)
-    fun options(): List<String> = renderOptions(SubtitleFonts.resolve(font))
+    fun options(): List<String> = renderOptions(SubtitleFonts.resolve(font).let { resolved -> legacyFontFamily?.let { resolved.copy(family=it) } ?: resolved })
     // Geometry is deliberately absent: moving subtitles must not recreate the renderer.
     fun renderOptions(resolved: SubtitleFont): List<String> = listOf(
         "--freetype-rel-fontsize=17", "--sub-text-scale=$textScale",
@@ -34,6 +34,7 @@ data class SubtitleStyle(
     )
     fun save(context: Context) {
         Store.prefs(context).edit().putInt("subtitle_style_version", 5)
+            .putBoolean("subtitle_compensate_inset",compensateNativeInset).putString("subtitle_legacy_font_family",legacyFontFamily)
             .putString("subtitle_font", font).putInt("subtitle_size", size.coerceIn(10, 60))
             .putInt("subtitle_scale", scale.coerceIn(50, 300)).putBoolean("subtitle_bold", bold)
             .putInt("subtitle_outline", outline.coerceIn(0, 6)).putInt("subtitle_shadow", shadow.coerceIn(0, 255))
@@ -59,7 +60,7 @@ data class SubtitleStyle(
             val rel = (if (legacy == null) intArrayOf(24,22,20,16,12) else intArrayOf(20,18,16,12,6))[size.coerceIn(0,4)]
             return SubtitleStyle(bold=bold, outline=outline.coerceIn(0,6), shadow=shadow.coerceIn(0,255),
                 bottomMargin=bottom.coerceIn(0,40), legacyMargin=legacy, font=font,
-                scale=(1700f/rel).roundToInt(), borderOpacity=220)
+                scale=(1700f/rel).roundToInt(), borderOpacity=220,compensateNativeInset=false)
         }
         fun migrated(size: Int, bold: Boolean, outline: Int, shadow: Int, margin: Int): SubtitleStyle =
             if (size == 2 && bold && outline == 4 && shadow == 128 && margin == 320) SubtitleStyle()
@@ -77,8 +78,10 @@ data class SubtitleStyle(
                         p.getInt("subtitle_outline",1),p.getInt("subtitle_shadow",64),p.getInt("subtitle_bottom_percent",6),
                         p.getInt("subtitle_legacy_margin",-1).takeIf {it>=0},font)
                 }
-                result.save(context)
-                return result
+                val preserved = if (!result.compensateNativeInset && font == "Roboto")
+                    result.copy(legacyFontFamily=SubtitleFonts.legacyRobotoFamily()) else result
+                preserved.save(context)
+                return preserved
             }
             return SubtitleStyle(size=p.getInt("subtitle_size",23).coerceIn(10,60),bold=p.getBoolean("subtitle_bold",true),
                 outline=p.getInt("subtitle_outline",0).coerceIn(0,6),shadow=p.getInt("subtitle_shadow",140).coerceIn(0,255),
@@ -87,7 +90,9 @@ data class SubtitleStyle(
                 scale=p.getInt("subtitle_scale",100).coerceIn(50,300),color=p.getInt("subtitle_color",0xFFFFFF),
                 background=p.getBoolean("subtitle_background",false), backgroundColor=p.getInt("subtitle_background_color",0),
                 backgroundOpacity=p.getInt("subtitle_background_opacity",128),borderColor=p.getInt("subtitle_border_color",0),
-                borderOpacity=p.getInt("subtitle_border_opacity",204),encoding=p.getString("subtitle_encoding","") ?: "")
+                borderOpacity=p.getInt("subtitle_border_opacity",204),encoding=p.getString("subtitle_encoding","") ?: "",
+                compensateNativeInset=p.getBoolean("subtitle_compensate_inset",true),
+                legacyFontFamily=p.getString("subtitle_legacy_font_family",null))
         }
     }
 }

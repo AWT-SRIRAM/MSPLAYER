@@ -78,7 +78,7 @@ fun SubtitleTextDialog(initial: SubtitleStyle, cancel: () -> Unit, apply: (Subti
         DropdownMenu(expanded=open,onDismissRequest={open=false}) {
             SubtitleFonts.choices().forEach {font-> DropdownMenuItem(
                 text={Text(font.label+if(font.available) "" else " (unavailable)")},enabled=font.available,
-                onClick={change(style.copy(font=font.label,bold=style.bold||font.forceBold));open=false}) }
+                onClick={change(style.copy(font=font.label,bold=style.bold||font.forceBold,legacyFontFamily=null));open=false}) }
         }
     }
 }

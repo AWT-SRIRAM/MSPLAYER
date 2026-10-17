@@ -51,6 +51,12 @@ class PlaybackService : Service() {
     val timeline = MutableStateFlow(PlaybackTimeline())
     private var released = false
     private var controlsVisible = true
+    private var subtitleControlsTop: Float? = null
+    fun subtitleControlsTop(top: Float) {
+        if (subtitleControlsTop == top) return
+        subtitleControlsTop = top
+        updateSubtitlePlacement(controlsVisible)
+    }
     private val audioEffects = AudioEffects()
     val effectSettings = MutableStateFlow(AudioEffectSettings())
     private val diagnostics = PlaybackDiagnostics()
@@ -76,10 +82,18 @@ class PlaybackService : Service() {
         layout.post {
             val surface = layout.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles) ?: return@post
             val style = SubtitleStyle.load(this)
+            val location = IntArray(2)
+            surface.getLocationInWindow(location)
+            val controlsLift = if (visible) subtitleControlsTop?.let { top ->
+                ((location[1] - surface.translationY + surface.height - top + 8 * resources.displayMetrics.density) / surface.height.coerceAtLeast(1)).coerceIn(0f,1f)
+            } ?: .28f else 0f
             val fraction = if (state.value.plainSubtitle) {
-                (if (style.legacyMargin == null) style.bottomMargin / 100f else 0f) + if (visible) .20f else 0f
+                (if (style.legacyMargin == null) style.bottomMargin / 100f else 0f) + controlsLift
             } else 0f
-            surface.translationY = -surface.height * fraction
+            // VLC 3.x substext.h adds a 4% intrinsic margin before sub-margin.
+            // New presets remove it; migrated custom layouts retain their exact offset.
+            val nativeInset = if (state.value.plainSubtitle && style.compensateNativeInset && style.legacyMargin == null) .04f else 0f
+            surface.translationY = surface.height * (nativeInset - fraction)
         }
     }
 
@@ -211,6 +225,7 @@ class PlaybackService : Service() {
     private var pendingPlayback = false
     private var videoLayout: org.videolan.libvlc.util.VLCVideoLayout? = null
     private var pendingStyleRestore: PlayerState? = null
+    private var pendingStyleTracks: PlayerState? = null
     private val externalSubtitles = mutableListOf<String>()
 
     fun attachVideo(layout: org.videolan.libvlc.util.VLCVideoLayout) {
@@ -391,11 +406,6 @@ class PlaybackService : Service() {
                             player.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, path, false)
                         }
                         refreshTracks()
-                        // IDs belong to the same reopened media, never a sorted-track index.
-                        if (state.value.audioTracks.any { it.first == prior.audioTrack }) player.setAudioTrack(prior.audioTrack)
-                        if (state.value.subtitles.any { it.first == prior.subtitleTrack }) player.setSpuTrack(prior.subtitleTrack)
-                        state.value = state.value.copy(audioTrack=player.audioTrack, subtitleTrack=player.spuTrack)
-                        updateSubtitleKind()
                         player.rate = prior.rate
                         player.setAudioDelay(prior.audioDelay * 1000)
                         player.setSpuDelay(prior.subtitleDelay * 1000)
@@ -489,6 +499,7 @@ class PlaybackService : Service() {
         resetBoost()
         savePosition()
         externalSubtitles.clear()
+        pendingStyleTracks = null
         queue = items.ifEmpty { listOf(selected) }
         queueItems.value = queue
         index = queue.indexOfFirst { it.uri == selected.uri }.coerceAtLeast(0)
@@ -714,10 +725,25 @@ class PlaybackService : Service() {
             state.value =
                 state.value.copy(audioTrack = player.audioTrack, subtitleTrack = player.spuTrack)
         }
+        pendingStyleTracks?.let { prior ->
+            if (prior.item?.uri != state.value.item?.uri) pendingStyleTracks = null
+            else {
+                // External slaves may arrive after Playing; retry on ESAdded using IDs
+                // from this exact media, never a sorted position or a duplicate name.
+                val audioReady = prior.audioTrack < 0 || state.value.audioTracks.any {it.first == prior.audioTrack}
+                val subtitleReady = prior.subtitleTrack < 0 || state.value.subtitles.any {it.first == prior.subtitleTrack}
+                if (audioReady) player.setAudioTrack(prior.audioTrack)
+                if (subtitleReady) player.setSpuTrack(prior.subtitleTrack)
+                state.value = state.value.copy(audioTrack=player.audioTrack,subtitleTrack=player.spuTrack)
+                if (audioReady && subtitleReady) pendingStyleTracks = null
+            }
+        }
         updateSubtitleKind()
     }
 
     fun audioTrack(id: Int, name: String) {
+        pendingStyleTracks = pendingStyleTracks?.copy(audioTrack=id)
+        pendingStyleRestore = pendingStyleRestore?.copy(audioTrack=id)
         player.setAudioTrack(id)
         Store.prefs(this).edit().putString("audio_name", name).apply()
         state.value = state.value.copy(audioTrack = id)
@@ -739,6 +765,8 @@ class PlaybackService : Service() {
     }
 
     fun subtitleTrack(id: Int, name: String) {
+        pendingStyleTracks = pendingStyleTracks?.copy(subtitleTrack=id)
+        pendingStyleRestore = pendingStyleRestore?.copy(subtitleTrack=id)
         val changed = player.spuTrack != id
         val position = player.time
         player.setSpuTrack(id)
@@ -781,6 +809,7 @@ class PlaybackService : Service() {
         if (prior.item == null) return
         opening?.cancel()
         pendingStyleRestore = prior
+        pendingStyleTracks = prior
         player.setEventListener(null)
         player.stop()
         if (videoAttached) player.detachViews()

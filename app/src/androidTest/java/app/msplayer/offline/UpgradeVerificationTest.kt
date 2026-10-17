@@ -18,8 +18,12 @@ class UpgradeVerificationTest {
         if (phase == "seed") {
             assertEquals(InstrumentationRegistry.getArguments().getString("seedVersion") ?: "0.3.1", version)
             prefs.edit().clear().putString("decoder", "Software").putBoolean("resume", false)
-                .putInt("subtitle_size", 2).putBoolean("subtitle_bold", true)
-                .putInt("subtitle_outline", 4).putInt("subtitle_shadow", 128).putInt("subtitle_margin", 320).commit()
+                .putInt("subtitle_style_version",4).putInt("subtitle_size",2).putBoolean("subtitle_bold",true)
+                .putInt("subtitle_outline",1).putInt("subtitle_shadow",64).putInt("subtitle_bottom_percent",6)
+                .putInt("subtitle_legacy_margin",-1).putString("subtitle_font","Default").commit()
+            if (InstrumentationRegistry.getArguments().getString("upgradeProfile") == "custom")
+                prefs.edit().putInt("subtitle_size",1).putBoolean("subtitle_bold",false).putInt("subtitle_outline",3)
+                    .putInt("subtitle_shadow",90).putInt("subtitle_bottom_percent",9).putString("subtitle_font","Sans Serif").commit()
             dao.save(SavedMedia().apply { this.uri = uri; title = "Upgrade history"; position = 12345; updated = 1 })
             dao.add(PlaylistEntry().apply { playlist = "Upgrade verification"; this.uri = uri; title = "Upgrade playlist"; added = 1 })
         } else {
@@ -29,9 +33,13 @@ class UpgradeVerificationTest {
             assertTrue(dao.entries("Upgrade verification").any { it.uri == uri })
             assertEquals("Software", prefs.getString("decoder", ""))
             assertFalse(prefs.getBoolean("resume", true))
-            assertEquals(5, prefs.getInt("subtitle_style_version", 0))
-            assertEquals(0, SubtitleStyle.load(context).outline)
-            assertEquals(0, SubtitleStyle.load(context).bottomMargin)
+            val style=SubtitleStyle.load(context)
+            assertEquals(5,prefs.getInt("subtitle_style_version",0))
+            if (InstrumentationRegistry.getArguments().getString("upgradeProfile") == "custom") {
+                assertEquals(77,style.scale);assertFalse(style.bold);assertEquals(3,style.outline)
+                assertEquals(90,style.shadow);assertEquals(9,style.bottomMargin);assertFalse(style.compensateNativeInset)
+                assertEquals("Sans Serif",style.font)
+            } else assertEquals(SubtitleStyle(font="Default"),style)
         }
     }
 }

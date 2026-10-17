@@ -26,6 +26,9 @@ class SubtitleRenderingVerificationTest {
         scenario.onActivity { activity = it }
         await { activity?.service != null }
         val service = activity!!.service!!
+        instrumentation.runOnMainSync { activity!!.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        await { activity!!.window.decorView.width>activity!!.window.decorView.height }
+        Thread.sleep(500)
         val item = MediaItem(Uri.fromFile(sample).toString(), "Subtitle rendering test", duration = 20000)
         instrumentation.runOnMainSync { activity!!.startMedia(listOf(item), item) }
         await { service.state.value.playing && service.state.value.subtitles.count { it.first >= 0 } >= 2 && service.state.value.position > 1500 }
@@ -64,7 +67,20 @@ class SubtitleRenderingVerificationTest {
             if (name == "caption-default") {
                 instrumentation.runOnMainSync { activity!!.playerControlsVisible = true }
                 val controlsImage = snapshot("caption-controls")
-                assertTrue("Caption stays above the seek bar", whitePixels(controlsImage, 72) > 300)
+                fun timeline(n:android.view.accessibility.AccessibilityNodeInfo?):android.view.accessibility.AccessibilityNodeInfo? {
+                    if(n==null)return null
+                    if(n.contentDescription?.toString()?.contains("Playback timeline")==true)return n
+                    for(i in 0 until n.childCount) timeline(n.getChild(i))?.let {return it};return null
+                }
+                val bar=android.graphics.Rect();timeline(instrumentation.uiAutomation.rootInActiveWindow)!!.getBoundsInScreen(bar)
+                assertTrue("Caption is visible above the measured seek control",whitePixels(controlsImage,bar.top*100/controlsImage.height)>300)
+                var overlapping=0
+                for(y in bar.top until bar.bottom.coerceAtMost(controlsImage.height)) for(x in controlsImage.width/4 until controlsImage.width*3/4) {
+                    val c=controlsImage.getPixel(x,y)
+                    val rgb=listOf(android.graphics.Color.red(c),android.graphics.Color.green(c),android.graphics.Color.blue(c))
+                    if(rgb.min()>160&&rgb.max()-rgb.min()<20)overlapping++
+                }
+                assertTrue("Subtitle pixels do not cross the timeline: $overlapping",overlapping<50)
                 controlsImage.recycle()
                 instrumentation.runOnMainSync { activity!!.playerControlsVisible = false }
             }

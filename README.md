@@ -1,6 +1,6 @@
 # MS PLAYER
 
-Offline, ad-free Android multimedia player built with Kotlin, Jetpack Compose, and LibVLC Android 3.7.7. Current source release: **0.4.0**, versionCode **5**, package `app.msplayer.offline`.
+Offline, ad-free Android multimedia player built with Kotlin, Jetpack Compose, and LibVLC Android 3.7.7. Current review source: **0.5.0**, versionCode **6**, package `app.msplayer.offline`.
 
 Primary device target: iQOO Neo10R running Android 16. Minimum Android API 26; compile/target API 36.
 
@@ -25,7 +25,7 @@ Install JDK 17 and Android SDK API 36 with Build Tools 36.0.0. Configure `JAVA_H
 .\gradlew.bat assembleDebug testDebugUnitTest lintDebug
 ```
 
-On macOS/Linux, use `./gradlew`. Default native ABI is ARM64; debug APK output is `app/build/outputs/apk/debug/app-debug.apk`.
+On macOS/Linux, use `./gradlew`. Debug installs as `app.msplayer.offline.debug` (MS PLAYER DEBUG), separately from the everyday app. The test runner refuses the release package. Default native ABI is ARM64; debug APK output is `app/build/outputs/apk/debug/app-debug.apk`.
 
 Pinned tooling: Gradle 8.11.1, AGP 8.10.1, Kotlin/Compose compiler 2.1.20. Gradle wrapper and distribution checksum are included.
 
@@ -51,9 +51,11 @@ The original signing key is excluded. An independently signed APK cannot update 
 
 ## Verification and limits
 
-The verification record contains 16 passing unit tests in each build variant, a complete emulator run with 13 active tests passing and one upgrade probe skipped, a separate passing two-install upgrade check, and final targeted gesture/music checks. Signing and 16 KB ZIP/native alignment were checked on the delivered ARM64 build. Lint reports zero errors and 40 warnings per variant.
+Version 0.5.0 adds continuous subtitle size/scale, exact migration of old defaults, a transactional Text dialog, encoding selection, native-inset compensation, and placement against the measured timeline boundary. ASS/PGS stay native. See [0.5.0 verification](docs/VERIFICATION-0.5.0.md) for phone/emulator results and measured residuals.
 
-See [verification details](docs/VERIFICATION-0.4.0.md) for exact coverage and qualifications. High-bitrate 4K playback still drops frames on the headless emulator; sustained iQOO performance, HDR/Dolby Vision colour, audio routes, and subjective subtitle/audio comfort need physical-device testing. AC3/EAC3 decoding does not imply Dolby Atmos certification or surround passthrough.
+The controlled iQOO comparison meets the approximate cap-height and bottom-clearance targets; native bold weight and multiline pitch still differ from MX. This is a review build, without a claim of pixel parity. Subtitle gestures/folder selection remain scheduled for 0.5.1; cue scroll and fade are deferred. The native surface alpha probe had no effect.
+
+The [0.4.0 verification](docs/VERIFICATION-0.4.0.md) remains historical evidence. Sustained high-bitrate performance, HDR/Dolby Vision colour and audio-route comfort are not established by this subtitle update. AC3/EAC3 decoding does not imply Dolby Atmos certification or surround passthrough.
 
 Arial/Droid font choices require actual device-installed families. Another app's private Android `IS_PENDING` downloads remain inaccessible; incomplete files may not play or seek. Exact MX thumbnail frames and pixel parity are not established.
 
@@ -71,4 +73,4 @@ Application code is provided under [MIT](LICENSE), subject to the exclusions and
 
 The existing launcher artwork, reference screenshots, and upstream test media retain their respective third-party rights and are not covered by the application's MIT grant. See the notices and [release history](docs/RELEASE-HISTORY.md) for provenance and LibVLC replacement/relinking instructions.
 
-[Source snapshot provenance](docs/SOURCE-PROVENANCE.json)
+[0.5.0 source provenance](docs/SOURCE-PROVENANCE-0.5.0.json) · [0.4.0 provenance](docs/SOURCE-PROVENANCE.json)

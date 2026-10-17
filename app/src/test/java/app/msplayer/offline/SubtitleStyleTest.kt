@@ -10,13 +10,18 @@ class SubtitleStyleTest {
         assertTrue(o.contains("--freetype-outline-thickness=6"));assertTrue(o.contains("--freetype-shadow-opacity=0"))
         assertEquals(d.renderOptions(font),d.copy(bottomMargin=30).renderOptions(font))
     }
+    @Test fun encodingsAreBoundedAndUnicodeIsNotDecodedTwice() {
+        assertTrue(SubtitleStyle(encoding="UTF-16").renderOptions(font).contains("--subsdec-encoding=UTF-8"))
+        assertTrue(SubtitleStyle(encoding="unexpected").renderOptions(font).contains("--subsdec-encoding="))
+        assertEquals(10,SubtitleStyle.encodings.size)
+    }
     @Test fun migrationTestsEveryStepAndPreservesCustomLook() {
         val expected=listOf(71,77,85,106,142)
         val legacy=listOf(85,94,106,142,283)
         for(i in 0..4) {
             val c=SubtitleStyle.migrateV4(i,false,3,80,9,null,"Arial")
             assertEquals(expected[i],c.scale);assertEquals(3,c.outline);assertEquals(80,c.shadow)
-            assertEquals(220,c.borderOpacity);assertEquals(9,c.bottomMargin);assertEquals("Arial",c.font)
+            assertFalse(c.compensateNativeInset);assertEquals(220,c.borderOpacity);assertEquals(9,c.bottomMargin);assertEquals("Arial",c.font)
             assertEquals(legacy[i],SubtitleStyle.migrateV4(i,false,3,80,9,100,"Arial").scale)
         }
         assertEquals(SubtitleStyle(font="Default"),SubtitleStyle.migrateV4(2,true,1,64,6,null,"Default"))

@@ -140,3 +140,7 @@ To replace LibVLC with a compatible independently built AAR:
 The project does not restrict library modification/relinking. The upstream JNI source includes native build scripts, patches and pinned VLC/contrib source recipes; native rebuilding normally requires a suitable Linux environment. No native source-build reproducibility claim is made until that build has been run.
 
 Reference research: MX Player's official description of HW/HW+ is https://support.mxplayer.in/support/solutions/articles/43000608821-what-are-the-differences-between-hw-and-hw- . MS PLAYER uses LibVLC and Android hardware-decoding support; the MX proprietary framework is not part of this application.
+
+## 0.5.0 review — versionCode 6
+
+Subtitle model/migration, transactional Text dialog, encoding and measured placement. See VERIFICATION-0.5.0.md. Native weight/line pitch and rapid pause during rotation remain known limitations. Existing v0.4.0 tag is preserved.

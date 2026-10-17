@@ -19,19 +19,39 @@ class SubtitleUpgradeTest {
             await {a?.service!=null};val s=a!!.service!!;val item=MediaItem(Uri.fromFile(file).toString(),"Subtitle upgrade",duration=30000)
             inst.runOnMainSync {a!!.startMedia(listOf(item),item)}
             await {s.timeline.value.position>700&&s.state.value.subtitles.any {it.first>=0}}
+            await {s.player.isPlaying}
             val native=s.vlc;val player=s.player
-            inst.runOnMainSync {s.subtitleStyle(SubtitleStyle.load(c));s.subtitleStyle(SubtitleStyle.load(c).copy(bottomMargin=10))}
+            await {
+                val decor=a!!.window.decorView
+                val surface=a!!.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles)
+                decor.width>decor.height && surface!=null && surface.height>=decor.height*.9f
+            }
+            Thread.sleep(400)
+            var placement=0f
+            inst.runOnMainSync {s.updateSubtitlePlacement(true)};Thread.sleep(100)
+            inst.runOnMainSync {placement=a!!.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles).translationY;repeat(5){s.updateSubtitlePlacement(true)}}
+            Thread.sleep(150)
+            inst.runOnMainSync {assertEquals("Placement updates are idempotent",placement,a!!.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles).translationY,1.5f)}
+            inst.runOnMainSync {
+                s.rate(.8f);assertTrue(s.beginTemporarySpeed());s.temporarySpeed(2f)
+                s.subtitleStyle(SubtitleStyle.load(c));assertEquals(2f,s.state.value.rate,.01f)
+                s.subtitleStyle(SubtitleStyle.load(c).copy(bottomMargin=10));assertEquals(2f,s.state.value.rate,.01f)
+                s.endTemporarySpeed();assertEquals(.8f,s.state.value.rate,.01f)
+            }
             Thread.sleep(300)
             inst.runOnMainSync {
                 assertSame(native,s.vlc);assertSame(player,s.player)
+                s.subtitleDelay(150)
                 assertEquals(10,SubtitleStyle.load(c).bottomMargin)
                 s.pause()
             }
             await {!s.state.value.playing}
-            inst.runOnMainSync {s.subtitleStyle(SubtitleStyle.load(c).copy(size=26))}
-            await {s.vlc!==native&&s.state.value.subtitles.any {it.first>=0}&&!s.state.value.buffering}
+            inst.runOnMainSync {s.subtitleStyle(SubtitleStyle.load(c).copy(size=26));s.subtitleTrack(-1,"Disable")}
+            await {s.vlc!==native&&s.state.value.subtitles.any {it.first>=0}&&!s.state.value.buffering&&!s.state.value.playing}
             assertFalse("Paused intent survives real renderer rebuild",s.state.value.playing)
             assertEquals(item.uri,s.state.value.item?.uri)
+            assertEquals(.8f,s.state.value.rate,.01f);assertEquals(150L,s.state.value.subtitleDelay)
+            assertEquals("An explicit Disable during reopen wins over the old selection",-1,s.player.spuTrack)
         } finally {inst.runOnMainSync {a?.closeApp()};scenario.close()}
     }
 }
