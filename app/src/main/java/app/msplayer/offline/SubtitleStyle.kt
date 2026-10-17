@@ -28,7 +28,9 @@ data class SubtitleStyle(
         "--freetype-background-color=${backgroundColor and 0xFFFFFF}",
         "--freetype-background-opacity=${if (background) backgroundOpacity.coerceIn(0, 255) else 0}",
         "--sub-margin=${legacyMargin?.coerceIn(0, 360) ?: 0}",
-        "--subsdec-encoding=${encoding.takeIf { it in encodings.values } ?: ""}",
+        // VLC's subtitle demuxer converts BOM-marked UTF-16 lines to UTF-8 first.
+        // Asking subsdec to decode those lines as UTF-16 would decode them twice.
+        "--subsdec-encoding=${if (encoding == "UTF-16") "UTF-8" else encoding.takeIf { it in encodings.values } ?: ""}",
     )
     fun save(context: Context) {
         Store.prefs(context).edit().putInt("subtitle_style_version", 5)

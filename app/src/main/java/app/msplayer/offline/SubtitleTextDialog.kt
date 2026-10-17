@@ -57,6 +57,7 @@ fun SubtitleTextDialog(initial: SubtitleStyle, cancel: () -> Unit, apply: (Subti
                     HorizontalDivider(Modifier.padding(vertical=8.dp),color=Color.White.copy(alpha=.15f))
                     Text("Layout",fontWeight=FontWeight.Medium)
                     SubtitleValue("Bottom clearance",draft.bottomMargin,0..40,"%") {draft=draft.copy(bottomMargin=it,legacyMargin=null)}
+                    SubtitleEncodingPicker(draft.encoding) {draft=draft.copy(encoding=it)}
                     
                 }
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
@@ -102,6 +103,16 @@ fun SubtitleTextDialog(initial: SubtitleStyle, cancel: () -> Unit, apply: (Subti
                 .clickable {change(rgb)},contentAlignment=Alignment.Center) {
                 if(selected==rgb) Text("\u2713",color=if(rgb==0)Color.White else Color.Black,fontWeight=FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable private fun SubtitleEncodingPicker(value:String,change:(String)->Unit) {
+    var open by remember {mutableStateOf(false)}
+    Box {
+        TextButton(onClick={open=true}) {Text("Encoding: ${SubtitleStyle.encodings.entries.firstOrNull {it.value==value}?.key ?: "Auto"}")}
+        DropdownMenu(expanded=open,onDismissRequest={open=false}) {
+            SubtitleStyle.encodings.forEach {(label,encoding)->DropdownMenuItem(text={Text(label)},onClick={change(encoding);open=false})}
         }
     }
 }

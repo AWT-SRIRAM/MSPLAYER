@@ -1,0 +1,3 @@
+# Phase 3 verification
+
+Build, 16 JVM tests, lint passed. Android 16 emulator native encoding test passed for Windows-1252, UTF-8, BOM-marked UTF-16, and Auto with equivalent rendered glyph coverage (within 5%). The initial explicit UTF-16 configuration failed: VLC demux already converts BOM-marked lines to UTF-8. The decoder option now reflects that normalization. Auto was not assumed to garble Western input. Physical encoding comparison remains pending due intermittent USB transport.
