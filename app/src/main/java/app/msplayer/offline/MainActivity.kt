@@ -1451,7 +1451,6 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
     var locked by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf<String?>(null) }
     var subtitleStyle by remember { mutableStateOf(SubtitleStyle.load(activity)) }
-    var subtitleDraft by remember { mutableStateOf(subtitleStyle) }
     var feedback by remember { mutableStateOf<PlayerFeedback?>(null) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var aspect by remember { mutableStateOf("Fit") }
@@ -1718,12 +1717,19 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                     TextButton(colors = ButtonDefaults.textButtonColors(contentColor = Color.White), onClick = { expanded = !expanded }) { Icon(Icons.Default.Settings, null); Spacer(Modifier.width(12.dp)); Text("Settings ${if (expanded) "▴" else "▾"}") }
                     if (expanded) {
                         DelayControls("Subtitle delay", state.subtitleDelay) { service.subtitleDelay(it) }
-                        TextButton(onClick = { subtitleDraft = subtitleStyle; menu = "Subtitle appearance" }) { Text("Subtitle appearance") }
+                        TextButton(onClick = { menu = "Subtitle appearance" }) { Text("Subtitle appearance") }
                     }
                 }
                 "Audio effects" -> AudioEffectsControls(service)
             }
         }
+    } else if (menu == "Subtitle appearance" && !activity.inPip) {
+        SubtitleTextDialog(subtitleStyle, cancel={menu=null;touch()}, apply={ value ->
+            service.subtitleStyle(value)
+            subtitleStyle=value
+            menu=null
+            touch()
+        })
     } else if (menu != null && !activity.inPip)
         PlayerMenuDialog(
             onDismissRequest = {
@@ -1734,14 +1740,6 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     when (menu) {
-                        "Subtitle appearance" -> {
-                            SubtitleStyleControls(subtitleDraft) { subtitleDraft = it }
-                            TextButton(onClick = {
-                                service.subtitleStyle(subtitleDraft)
-                                subtitleStyle = subtitleDraft
-                                menu = null
-                            }) { Text("Apply appearance") }
-                        }
                         "Speed" ->
                             listOf(.25f, .5f, .75f, 1f, 1.25f, 1.5f, 2f, 3f).forEach { rate ->
                                 TextButton(

@@ -223,66 +223,6 @@ fun PlayerMenuDialog(
 
 @Composable
 
-fun SubtitleStyleControls(style: SubtitleStyle, onChange: (SubtitleStyle) -> Unit) {
-
-    Text("Text subtitles", color = Color.White, fontWeight = FontWeight.SemiBold)
-
-    var fontsOpen by remember { mutableStateOf(false) }
-
-    TextButton(onClick = { fontsOpen = !fontsOpen }) { Text("Font: ${style.font}") }
-
-    if (fontsOpen) SubtitleFonts.choices().forEach { font ->
-
-        TextButton(enabled = font.available, onClick = { onChange(style.copy(font = font.label, bold = if(font.forceBold) true else style.bold)); fontsOpen=false }) {
-
-            Text(font.label + if(font.available) "" else " · unavailable on this device")
-
-        }
-
-    }
-
-    Text("Size", color = Color.White)
-
-    Slider(value = style.size.toFloat(), onValueChange = { onChange(style.copy(size = it.toInt())) },
-
-        valueRange = 10f..60f, steps = 49)
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-
-        Text("Bold", modifier = Modifier.weight(1f), color = Color.White)
-
-        Switch(checked = style.bold, onCheckedChange = { onChange(style.copy(bold = it)) })
-
-    }
-
-    Text("Outline ${style.outline}", color = Color.White)
-
-    Slider(value = style.outline.toFloat(), onValueChange = { onChange(style.copy(outline = it.toInt())) },
-
-        valueRange = 0f..6f, steps = 5)
-
-    Text("Shadow ${style.shadow * 100 / 255}%", color = Color.White)
-
-    Slider(value = style.shadow.toFloat(), onValueChange = { onChange(style.copy(shadow = it.toInt())) },
-
-        valueRange = 0f..255f)
-
-    Text("Bottom clearance ${style.bottomMargin}%", color = Color.White)
-
-    Slider(value = style.bottomMargin.toFloat(),
-
-        onValueChange = { onChange(style.copy(bottomMargin = it.toInt(), legacyMargin = null)) },
-
-        valueRange = 0f..40f)
-
-    TextButton(onClick = { onChange(SubtitleStyle()) }) { Text("Reset subtitle appearance") }
-
-}
-
-
-
-@Composable
-
 fun PlayerSidePanel(title: String, dismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
 
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
