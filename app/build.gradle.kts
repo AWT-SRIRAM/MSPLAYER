@@ -13,7 +13,8 @@ android {
         versionCode = 5
         versionName = "0.4.0"
         ndk { abiFilters += (project.findProperty("testAbi")?.toString() ?: "arm64-v8a") }
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "app.msplayer.offline.SafeTestRunner"
+        manifestPlaceholders["appLabel"] = "MS PLAYER"
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -27,7 +28,9 @@ android {
             keyPassword=System.getenv("MSPLAYER_STORE_PASSWORD")
         }
     }
-    buildTypes { release { isMinifyEnabled = false; if(signingConfigs.findByName("localTest") != null) signingConfig=signingConfigs.getByName("localTest") } }
+    buildTypes {
+        debug { applicationIdSuffix = ".debug"; manifestPlaceholders["appLabel"] = "MS PLAYER DEBUG" }
+        release { isMinifyEnabled = false; if(signingConfigs.findByName("localTest") != null) signingConfig=signingConfigs.getByName("localTest") } }
     lint { abortOnError = true }
 }
 dependencies {

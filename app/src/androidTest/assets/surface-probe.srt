@@ -1,0 +1,4 @@
+1
+00:00:00,000 --> 00:00:29,500
+Subtitle calibration reference
+Readable white bold text
