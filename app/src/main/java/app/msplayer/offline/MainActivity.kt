@@ -20,6 +20,8 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.*
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.layout.*
@@ -33,6 +35,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -254,7 +257,11 @@ class MainActivity : ComponentActivity() {
         immersive(showPlayer)
     }
 
-    override fun onConfigurationChanged(newConfig: Configuration) { service?.endTemporarySpeed(); super.onConfigurationChanged(newConfig) }
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        service?.endTemporarySpeed()
+        super.onConfigurationChanged(newConfig)
+        service?.updateSubtitlePlacement(playerControlsVisible && !inPip)
+    }
 
     override fun onPause() { service?.endTemporarySpeed(); super.onPause() }
 
@@ -490,6 +497,9 @@ fun App(activity: MainActivity) {
     var playlistName by remember { mutableStateOf("Favorites") }
     var activePlaylist by rememberSaveable { mutableStateOf<String?>(null) }
     var folderAction by remember { mutableStateOf<String?>(null) }
+    var streamDialog by remember { mutableStateOf(false) }
+    var streamUrl by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<MediaItem?>(null) }
     val scope = rememberCoroutineScope()
     var history by remember { mutableStateOf<List<SavedMedia>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -577,6 +587,7 @@ fun App(activity: MainActivity) {
                     }
                     refresh++
                 }
+            "Delete" -> deleteTarget = item
         }
     }
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -740,7 +751,10 @@ fun App(activity: MainActivity) {
                             else -> groups.sortedBy { it.name.lowercase() }
                         }
                     if (folders.isEmpty()) AccessEmpty(activity)
-                    else
+                    else {
+                        val recentVideos = remember(activity.videos) {
+                            activity.videos.filter { !it.audio }.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }.take(8)
+                        }
                         LazyColumn(contentPadding = PaddingValues(bottom = 90.dp)) {
                             item {
                                 Row(
@@ -755,8 +769,51 @@ fun App(activity: MainActivity) {
                                     QuickAction("History", Icons.Default.History) {
                                         tab = "History"
                                     }
+                                    QuickAction("Stream", Icons.Default.CloudQueue) {
+                                        streamDialog = true
+                                    }
                                     QuickAction("Open", Icons.Default.FileOpen) {
                                         activity.openFile.launch(arrayOf("*/*"))
+                                    }
+                                }
+                            }
+                            if (recentVideos.isNotEmpty()) {
+                                item {
+                                    Column(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp)) {
+                                        Text("Recently Added", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp))
+                                        LazyRow(
+                                            contentPadding = PaddingValues(horizontal = 16.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        ) {
+                                            items(recentVideos, key = { "recent_${it.uri}" }) { video ->
+                                                Column(
+                                                    Modifier.width(130.dp).clickable { play(video) }
+                                                ) {
+                                                    Box(Modifier.width(130.dp).height(74.dp)) {
+                                                        Thumbnail(video, Modifier.fillMaxSize())
+                                                        if (history.none { it.uri == video.uri }) {
+                                                            Box(
+                                                                Modifier.align(Alignment.TopStart).padding(4.dp)
+                                                                    .background(Color(0xFFFF3B72), RoundedCornerShape(3.dp))
+                                                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                            ) {
+                                                                Text("NEW", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                            }
+                                                        }
+                                                    }
+                                                    Text(
+                                                        video.title,
+                                                        fontSize = 12.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(top = 4.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        HorizontalDivider(Modifier.padding(top = 14.dp, bottom = 6.dp), color = Color.White.copy(alpha = 0.08f))
                                     }
                                 }
                             }
@@ -771,39 +828,7 @@ fun App(activity: MainActivity) {
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Box(Modifier.width(72.dp).height(54.dp)) {
-                                        Canvas(Modifier.fillMaxSize()) {
-                                            val w = size.width
-                                            val h = size.height
-                                            val path =
-                                                androidx.compose.ui.graphics.Path().apply {
-                                                    moveTo(0f, h * .2f)
-                                                    cubicTo(
-                                                        0f,
-                                                        h * .08f,
-                                                        w * .04f,
-                                                        0f,
-                                                        w * .12f,
-                                                        0f,
-                                                    )
-                                                    lineTo(w * .34f, 0f)
-                                                    lineTo(w * .46f, h * .18f)
-                                                    lineTo(w * .9f, h * .18f)
-                                                    cubicTo(
-                                                        w * .97f,
-                                                        h * .18f,
-                                                        w,
-                                                        h * .22f,
-                                                        w,
-                                                        h * .31f,
-                                                    )
-                                                    lineTo(w, h * .88f)
-                                                    cubicTo(w, h * .96f, w * .97f, h, w * .9f, h)
-                                                    lineTo(w * .1f, h)
-                                                    cubicTo(w * .03f, h, 0f, h * .96f, 0f, h * .88f)
-                                                    close()
-                                                }
-                                            drawPath(path, Color(0xFF45505D))
-                                        }
+                                        FolderThumbnail(entry, Modifier.fillMaxSize())
                                         val newCount =
                                             entry.items.count { row ->
                                                 history.none { it.uri == row.uri }
@@ -842,6 +867,7 @@ fun App(activity: MainActivity) {
                                 }
                             }
                         }
+                    }
                 }
                 items.isEmpty() ->
                     if (tab == "Audio") AccessEmpty(activity)
@@ -1053,6 +1079,71 @@ fun App(activity: MainActivity) {
             },
             dismissButton = { TextButton(onClick = { playlistDialog = false }) { Text("Cancel") } },
         )
+    if (deleteTarget != null) {
+        val target = deleteTarget!!
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete media file") },
+            text = { Text("Permanently delete \"${target.title}\" from storage?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                val uri = Uri.parse(target.uri)
+                                if (uri.scheme == "content") {
+                                    runCatching { activity.contentResolver.delete(uri, null, null) }
+                                } else if (uri.scheme == "file") {
+                                    runCatching { File(uri.path ?: "").delete() }
+                                }
+                            }
+                            deleteTarget = null
+                            activity.reload()
+                            refresh++
+                            activity.toast("File deleted")
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252))
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }
+        )
+    }
+    if (streamDialog) {
+        AlertDialog(
+            onDismissRequest = { streamDialog = false },
+            title = { Text("Network Stream") },
+            text = {
+                Column {
+                    Text("Enter a video or audio stream URL (HTTP, HTTPS, RTSP, RTMP):", fontSize = 13.sp, color = Muted)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = streamUrl,
+                        onValueChange = { streamUrl = it },
+                        label = { Text("Stream URL") },
+                        placeholder = { Text("https://example.com/stream.m3u8") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = PlaybackRules.isStreamUrl(streamUrl),
+                    onClick = {
+                        val url = streamUrl.trim()
+                        streamDialog = false
+                        streamUrl = ""
+                        activity.lifecycleScope.launch {
+                            val item = Library.opened(activity, Uri.parse(url))
+                            play(item)
+                        }
+                    }
+                ) { Text("Play") }
+            },
+            dismissButton = { TextButton(onClick = { streamDialog = false }) { Text("Cancel") } }
+        )
+    }
 }
 
 fun Set<String>.toggle(value: String) = if (value in this) this - value else this + value
@@ -1169,6 +1260,39 @@ fun Thumbnail(item: MediaItem, modifier: Modifier) {
 }
 
 @Composable
+fun FolderThumbnail(entry: MediaFolder, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var bitmap by remember(entry.name, entry.items.size) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(entry.name, entry.items.size) {
+        bitmap = Library.folderThumbnail(context, entry)
+    }
+    Box(modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF1E232B)), contentAlignment = Alignment.Center) {
+        bitmap?.let {
+            Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f)))))
+            Icon(Icons.Default.Folder, null, tint = Accent, modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(20.dp))
+        } ?: Canvas(Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(0f, h * .2f)
+                cubicTo(0f, h * .08f, w * .04f, 0f, w * .12f, 0f)
+                lineTo(w * .34f, 0f)
+                lineTo(w * .46f, h * .18f)
+                lineTo(w * .9f, h * .18f)
+                cubicTo(w * .97f, h * .18f, w, h * .22f, w, h * .31f)
+                lineTo(w, h * .88f)
+                cubicTo(w, h * .96f, w * .97f, h, w * .9f, h)
+                lineTo(w * .1f, h)
+                cubicTo(w * .03f, h, 0f, h * .96f, 0f, h * .88f)
+                close()
+            }
+            drawPath(path, Color(0xFF45505D))
+        }
+    }
+}
+
+@Composable
 fun MediaRow(
     item: MediaItem,
     seen: Boolean,
@@ -1198,13 +1322,26 @@ fun MediaRow(
     ) {
         Thumbnail(resolved, if(item.audio) Modifier.size(56.dp) else Modifier.width(96.dp).height(54.dp))
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(
-                item.title,
-                color = if (seen) Color.White else Cyan,
-                fontSize = 17.sp,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
+            val isPlaying = activity?.service?.state?.value?.item?.uri == item.uri
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    item.title,
+                    color = if (isPlaying) Accent else if (seen) Muted else Color.White,
+                    fontSize = 16.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (!seen) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        Modifier.background(Color(0xFFFF3B72), RoundedCornerShape(3.dp))
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Text("NEW", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 info?.subtitles?.firstOrNull()?.let { Badge(it, Color(0xFF00BE81)) }
                 if (resolved.height > 0) Badge("${resolved.height}p")
@@ -1248,9 +1385,18 @@ fun ItemMenu(onAction: (String) -> Unit, remove: Boolean) {
     Box {
         IconButton(onClick = { expanded = true }) { Icon(Icons.Default.MoreVert, "File options") }
         DropdownMenu(expanded, { expanded = false }) {
-            listOf("Playlist", "Share", "Details").forEach { action ->
+            listOf("Playlist", "Share", "Details", "Delete").forEach { action ->
                 DropdownMenuItem(
-                    text = { Text(if (action == "Playlist") "Add to playlist" else action) },
+                    text = {
+                        Text(
+                            when (action) {
+                                "Playlist" -> "Add to playlist"
+                                "Delete" -> "Delete file"
+                                else -> action
+                            },
+                            color = if (action == "Delete") Color(0xFFFF5252) else Color.White
+                        )
+                    },
                     onClick = {
                         expanded = false
                         onAction(action)
@@ -1537,144 +1683,172 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                 ) {
                     Icon(Icons.Default.Lock, "Unlock controls")
                 }
-            else if (controls)
+            AnimatedVisibility(
+                visible = controls && !locked,
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(200)),
+            ) {
                 Column(
                     Modifier.fillMaxSize()
                         .safeDrawingPadding()
-                        .background(Color.Black.copy(alpha = .18f))
                 ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .85f), Color.Black.copy(alpha = .4f), Color.Transparent)))
+                            .padding(bottom = 6.dp)
                     ) {
-                        IconButton(onClick = { activity.exitPlayer() }) {
-                            Icon(Icons.Default.ArrowBack, "Back")
-                        }
-                        Text(
-                            state.item?.title ?: "",
-            modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        IconButton(
-                            onClick = {
-                                service.refreshTracks()
-                                menu = "Audio"
-                                touch()
-                            }
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Default.MusicNote, "Audio tracks")
-                        }
-                        IconButton(
-                            onClick = {
-                                service.refreshTracks()
-                                menu = "Subtitles"
-                                touch()
+                            IconButton(onClick = { activity.exitPlayer() }) {
+                                Icon(Icons.Default.ArrowBack, "Back")
                             }
-                        ) {
-                            Icon(Icons.Default.Subtitles, "Subtitles")
-                        }
-                        TextButton(
-                            onClick = {
-                                menu = "Decoder"
-                                touch()
-                            }
-                        ) {
                             Text(
-                                if (state.decoder == "Software") "SW"
-                                else if (state.decoder == "Hardware") "HW" else "Auto",
-                                color = Color.White,
+                                state.item?.title ?: "",
+                                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                        }
-                        IconButton(
-                            onClick = {
-                                menu = "Options"
-                                touch()
+                            IconButton(
+                                onClick = {
+                                    service.refreshTracks()
+                                    menu = "Audio"
+                                    touch()
+                                }
+                            ) {
+                                Icon(Icons.Default.MusicNote, "Audio tracks")
                             }
-                        ) {
-                            Icon(Icons.Default.MoreVert, "Player options")
-                        }
-                    }
-                    Row(
-                        Modifier.padding(start = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(
-                            onClick = {
-                                menu = "Speed"
-                                touch()
+                            IconButton(
+                                onClick = {
+                                    service.refreshTracks()
+                                    menu = "Subtitles"
+                                    touch()
+                                }
+                            ) {
+                                Icon(Icons.Default.Subtitles, "Subtitles")
                             }
-                        ) {
-                            Text("${state.rate}×", color = Color.White)
+                            val codecTag = state.videoCodec.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+                            val decoderTag = if (state.decoder == "Software") "SW" else if (state.decoder == "Hardware") "HW" else "Auto"
+                            TextButton(
+                                onClick = {
+                                    menu = "Decoder"
+                                    touch()
+                                }
+                            ) {
+                                Text(
+                                    "$decoderTag$codecTag",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    menu = "Options"
+                                    touch()
+                                }
+                            ) {
+                                Icon(Icons.Default.MoreVert, "Player options")
+                            }
                         }
-                        IconButton(onClick = { menu = "Audio effects"; touch() }, modifier = Modifier.size(44.dp).background(Color(0xCC22579A), CircleShape)) {
-                            Icon(Icons.Default.GraphicEq, "Audio effects", tint = Color.White)
+                        Row(
+                            Modifier.padding(start = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    menu = "Speed"
+                                    touch()
+                                }
+                            ) {
+                                Text("${state.rate}×", color = Color.White)
+                            }
+                            IconButton(onClick = { menu = "Audio effects"; touch() }, modifier = Modifier.size(44.dp).background(Color(0xCC22579A), CircleShape)) {
+                                Icon(Icons.Default.GraphicEq, "Audio effects", tint = Color.White)
+                            }
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    PlayerTimeline(service, dragPosition, { dragPosition = it }, { touch() })
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .5f), Color.Black.copy(alpha = .9f))))
+                            .padding(top = 8.dp)
                     ) {
-                        IconButton(
-                            onClick = {
-                                locked = true
-                                controls = false
+                        PlayerTimeline(service, dragPosition, { dragPosition = it }, { touch() })
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    locked = true
+                                    controls = false
+                                }
+                            ) {
+                                Icon(Icons.Default.LockOpen, "Lock controls")
                             }
-                        ) {
-                            Icon(Icons.Default.LockOpen, "Lock controls")
-                        }
-                        Spacer(Modifier.weight(1f))
-                        IconButton(
-                            onClick = {
-                                service.previous()
-                                touch()
+                            Spacer(Modifier.weight(1f))
+                            if (state.subtitleTrack >= 0) {
+                                IconButton(onClick = { service.seekCue(false); touch() }) {
+                                    Icon(Icons.Default.FastRewind, "Previous cue", tint = Cyan, modifier = Modifier.size(28.dp))
+                                }
                             }
-                        ) {
-                            Icon(
-                                Icons.Default.SkipPrevious,
-                                "Previous",
-                                modifier = Modifier.size(34.dp),
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                service.toggle()
-                                touch()
-                            },
-                            modifier = Modifier.padding(horizontal = 18.dp).size(60.dp),
-                        ) {
-                            Icon(
-                                if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                if (state.playing) "Pause" else "Play",
-                                modifier = Modifier.size(52.dp),
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                service.next()
-                                touch()
+                            IconButton(
+                                onClick = {
+                                    service.previous()
+                                    touch()
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.SkipPrevious,
+                                    "Previous",
+                                    modifier = Modifier.size(34.dp),
+                                )
                             }
-                        ) {
-                            Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(34.dp))
-                        }
-                        Spacer(Modifier.weight(1f))
-                        IconButton(
-                            onClick = {
-                                menu = "Aspect ratio"
-                                touch()
+                            IconButton(
+                                onClick = {
+                                    service.toggle()
+                                    touch()
+                                },
+                                modifier = Modifier.padding(horizontal = 14.dp).size(60.dp),
+                            ) {
+                                Icon(
+                                    if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    if (state.playing) "Pause" else "Play",
+                                    modifier = Modifier.size(52.dp),
+                                )
                             }
-                        ) {
-                            Icon(Icons.Default.AspectRatio, "Aspect ratio")
-                        }
-                        IconButton(onClick = { activity.enterPip() }) {
-                            Icon(Icons.Default.PictureInPictureAlt, "Picture-in-picture")
+                            IconButton(
+                                onClick = {
+                                    service.next()
+                                    touch()
+                                }
+                            ) {
+                                Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(34.dp))
+                            }
+                            if (state.subtitleTrack >= 0) {
+                                IconButton(onClick = { service.seekCue(true); touch() }) {
+                                    Icon(Icons.Default.FastForward, "Next cue", tint = Cyan, modifier = Modifier.size(28.dp))
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            IconButton(
+                                onClick = {
+                                    menu = "Aspect ratio"
+                                    touch()
+                                }
+                            ) {
+                                Icon(Icons.Default.AspectRatio, "Aspect ratio")
+                            }
+                            IconButton(onClick = { activity.enterPip() }) {
+                                Icon(Icons.Default.PictureInPictureAlt, "Picture-in-picture")
+                            }
                         }
                     }
                 }
+            }
         }
         if (state.buffering)
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = Accent)

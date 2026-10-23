@@ -50,4 +50,36 @@ class PlaybackRulesTest {
         assertEquals("ASS", PlaybackRules.subtitleBadge("ssa "))
         assertEquals("SRT", PlaybackRules.subtitleBadge("subt"))
     }
+
+    @Test
+    fun cueTimestampsParseAndNavigateCorrectly() {
+        val srtSample = """
+            1
+            00:01:20,123 --> 00:01:24,456
+            Hello world
+
+            2
+            00:02:15.500 --> 00:02:18.000
+            Second cue
+        """.trimIndent()
+        val cues = PlaybackRules.parseCueTimestamps(srtSample)
+        assertEquals(2, cues.size)
+        assertEquals(80123L, cues[0])
+        assertEquals(135500L, cues[1])
+        assertEquals(80123L, PlaybackRules.findNextCue(cues, 0L))
+        assertEquals(135500L, PlaybackRules.findNextCue(cues, 80123L))
+        assertEquals(null, PlaybackRules.findNextCue(cues, 140000L))
+        assertEquals(80123L, PlaybackRules.findPrevCue(cues, 135500L))
+        assertEquals(null, PlaybackRules.findPrevCue(cues, 80123L))
+    }
+
+    @Test
+    fun streamUrlValidationDetectsSupportedProtocols() {
+        assertTrue(PlaybackRules.isStreamUrl("https://example.com/live.m3u8"))
+        assertTrue(PlaybackRules.isStreamUrl("http://example.com/video.mp4"))
+        assertTrue(PlaybackRules.isStreamUrl("rtsp://192.168.1.50:554/ch0"))
+        assertTrue(PlaybackRules.isStreamUrl("rtmp://live.stream.net/app/key"))
+        assertFalse(PlaybackRules.isStreamUrl("content://media/external/video/media/123"))
+        assertFalse(PlaybackRules.isStreamUrl("/storage/emulated/0/DCIM/video.mp4"))
+    }
 }

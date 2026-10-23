@@ -139,4 +139,25 @@ object PlaybackRules {
             "webvtt" -> "VTT"
             else -> codec.trim().uppercase().take(7)
         }
+
+    fun parseCueTimestamps(text: String): List<Long> {
+        val regex = Regex("""(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->""")
+        return regex.findAll(text).map { match ->
+            val (h, m, s, ms) = match.destructured
+            h.toLong() * 3600000L + m.toLong() * 60000L + s.toLong() * 1000L + ms.toLong()
+        }.sorted().distinct().toList()
+    }
+
+    fun findNextCue(cues: List<Long>, currentMs: Long): Long? =
+        cues.firstOrNull { it > currentMs + 500L }
+
+    fun findPrevCue(cues: List<Long>, currentMs: Long): Long? =
+        cues.lastOrNull { it < currentMs - 1200L }
+
+    fun isStreamUrl(url: String): Boolean {
+        val lower = url.trim().lowercase(java.util.Locale.ROOT)
+        return lower.startsWith("http://") || lower.startsWith("https://") ||
+                lower.startsWith("rtsp://") || lower.startsWith("rtmp://") ||
+                lower.startsWith("mms://") || lower.startsWith("udp://")
+    }
 }

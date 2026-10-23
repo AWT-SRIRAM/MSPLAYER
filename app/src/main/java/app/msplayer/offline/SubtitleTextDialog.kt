@@ -53,9 +53,13 @@ fun SubtitleTextDialog(initial: SubtitleStyle, cancel: () -> Unit, apply: (Subti
                         SubtitleValue("Border width",draft.outline,1..6) {draft=draft.copy(outline=it)}
                     }
                     SubtitleToggle("Shadow",draft.shadow>0) {if(!it) savedShadow=draft.shadow;draft=draft.copy(shadow=if(it) savedShadow else 0)}
-                    if(draft.shadow>0) SubtitleValue("Shadow opacity",draft.shadow,0..255) {draft=draft.copy(shadow=it)}
+                    if(draft.shadow>0) {
+                        SubtitleValue("Shadow opacity",draft.shadow,0..255) {draft=draft.copy(shadow=it)}
+                        SubtitleValue("Shadow offset",draft.shadowOffset,0..10,"px") {draft=draft.copy(shadowOffset=it)}
+                    }
                     HorizontalDivider(Modifier.padding(vertical=8.dp),color=Color.White.copy(alpha=.15f))
                     Text("Layout",fontWeight=FontWeight.Medium)
+                    SubtitleValue("Line spacing",draft.lineSpacing,80..200,"%") {draft=draft.copy(lineSpacing=it)}
                     SubtitleValue("Bottom clearance",draft.bottomMargin,0..40,"%") {draft=draft.copy(bottomMargin=it,legacyMargin=null)}
                     SubtitleEncodingPicker(draft.encoding) {draft=draft.copy(encoding=it)}
                     

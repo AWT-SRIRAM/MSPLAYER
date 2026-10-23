@@ -38,6 +38,7 @@ data class PlayerState(
     val subtitleTrack: Int = -1,
     val audioDelay: Long = 0,
     val subtitleDelay: Long = 0,
+    val videoCodec: String = "",
 )
 
 class PlaybackService : Service() {
@@ -94,6 +95,14 @@ class PlaybackService : Service() {
             // New presets remove it; migrated custom layouts retain their exact offset.
             val nativeInset = if (state.value.plainSubtitle && style.compensateNativeInset && style.legacyMargin == null) .04f else 0f
             surface.translationY = surface.height * (nativeInset - fraction)
+            if (state.value.plainSubtitle) {
+                val lineScale = (style.lineSpacing / 100f).coerceIn(0.8f, 2.0f)
+                surface.pivotY = surface.height.toFloat()
+                surface.pivotX = surface.width / 2f
+                surface.scaleY = lineScale
+            } else {
+                surface.scaleY = 1f
+            }
         }
     }
 
@@ -759,7 +768,12 @@ class PlaybackService : Service() {
             val externalIds = player.spuTracks.orEmpty().map { it.id }.filter { it >= 0 && it !in nativeIds }.sorted()
             val externalPath = externalSubtitles.getOrNull(externalIds.indexOf(player.spuTrack))
             val authoredExternal = track == null && externalPath?.substringAfterLast('.')?.lowercase() in listOf("ass", "ssa", "sup", "sub", "idx")
-            state.value = state.value.copy(plainSubtitle = !authoredExternal && codec !in listOf("ssa", "ass", "pgs", "pgss", "bdpg", "spu", "dvbs", "dvd"))
+            val vTrack = media?.let { m -> (0 until m.trackCount).mapNotNull { m.getTrack(it) }.filterIsInstance<org.videolan.libvlc.interfaces.IMedia.VideoTrack>().firstOrNull() }
+            val vCodec = vTrack?.let { PlaybackRules.fourcc(it.fourcc).uppercase() } ?: ""
+            state.value = state.value.copy(
+                plainSubtitle = !authoredExternal && codec !in listOf("ssa", "ass", "pgs", "pgss", "bdpg", "spu", "dvbs", "dvd"),
+                videoCodec = vCodec.takeIf { it.isNotBlank() } ?: state.value.videoCodec
+            )
         } finally { media?.release() }
         updateSubtitlePlacement(controlsVisible)
     }
@@ -787,11 +801,37 @@ class PlaybackService : Service() {
         state.value = state.value.copy(subtitleDelay = ms)
     }
 
+    private var activeCues: List<Long> = emptyList()
+
+    fun loadCues(text: String) {
+        activeCues = PlaybackRules.parseCueTimestamps(text)
+    }
+
+    fun seekCue(forward: Boolean): Boolean {
+        val current = timeline.value.position
+        val target = if (forward) {
+            PlaybackRules.findNextCue(activeCues, current) ?: (current + 5000L)
+        } else {
+            PlaybackRules.findPrevCue(activeCues, current) ?: (current - 5000L)
+        }
+        val safe = PlaybackRules.safeSeek(target, timeline.value.duration)
+        seek(safe)
+        return true
+    }
+
     fun addSubtitle(path: String): Boolean {
         val result =
             player.addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, path, true)
         refreshTracks()
-        if (result && path !in externalSubtitles) externalSubtitles.add(path)
+        if (result && path !in externalSubtitles) {
+            externalSubtitles.add(path)
+            runCatching {
+                val file = java.io.File(path)
+                if (file.isFile && file.length() < 5 * 1024 * 1024) {
+                    loadCues(file.readText())
+                }
+            }
+        }
         return result
     }
 
@@ -824,6 +864,26 @@ class PlaybackService : Service() {
         bindPlayerEvents()
         videoLayout?.let { player.attachViews(it, null, true, false) }
         openCurrent(prior.position, false)
+    }
+
+    fun updateSubtitlePosition(bottomPercent: Int) {
+        val style = SubtitleStyle.load(this).copy(bottomMargin = bottomPercent.coerceIn(0, 40), legacyMargin = null)
+        style.save(this)
+        updateSubtitlePlacement(controlsVisible)
+    }
+
+    fun updateSubtitleScale(scalePercent: Int) {
+        val style = SubtitleStyle.load(this).copy(scale = scalePercent.coerceIn(50, 300))
+        style.save(this)
+        val layout = videoLayout ?: return
+        layout.post {
+            val surface = layout.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles) ?: return@post
+            val scaleFactor = (scalePercent / 100f).coerceIn(0.5f, 3.0f)
+            surface.pivotX = surface.width / 2f
+            surface.pivotY = surface.height.toFloat()
+            surface.scaleX = scaleFactor
+            surface.scaleY = scaleFactor * (style.lineSpacing / 100f).coerceIn(0.8f, 2.0f)
+        }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {

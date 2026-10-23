@@ -89,11 +89,17 @@ object Library {
         } finally { retriever.release() }
     }
     private val probes = Semaphore(2)
-    private val thumbSlots = Semaphore(1)
+    private val thumbSlots = Semaphore(3)
     val videoPlaybackActive = MutableStateFlow(false)
     private val thumbLocks = Array(32) { Mutex() }
     val thumbnailRevision = MutableStateFlow(0)
     fun retryThumbnails() { thumbs.evictAll(); thumbnailRevision.value++ }
+
+    suspend fun folderThumbnail(context: Context, folder: MediaFolder): Bitmap? {
+        val rep = folder.items.filter { !it.audio }.maxByOrNull { it.added.takeIf { a -> a > 0 } ?: it.modified }
+            ?: folder.items.firstOrNull { !it.audio } ?: return null
+        return thumbnail(context, rep)
+    }
     private suspend fun awaitIdle() { videoPlaybackActive.first { !it } }
     private val metadata = LruCache<String, MediaInfo>(1024)
 
@@ -243,6 +249,10 @@ object Library {
 
     suspend fun opened(context: Context, uri: Uri): MediaItem =
         withContext(Dispatchers.IO) {
+            if (uri.scheme in listOf("http", "https", "rtsp", "rtmp", "mms", "udp")) {
+                val title = uri.lastPathSegment?.substringBefore('?')?.takeIf { it.isNotBlank() } ?: uri.toString()
+                return@withContext MediaItem(uri.toString(), title, folder = "Network Streams", size = 0L, audio = false)
+            }
             var name = uri.lastPathSegment ?: "Media"
             var size = 0L
             runCatching {
