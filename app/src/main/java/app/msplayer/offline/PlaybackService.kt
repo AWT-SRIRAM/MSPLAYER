@@ -524,6 +524,7 @@ class PlaybackService : Service() {
         opening?.cancel()
         dimensionProbe?.cancel()
         clearSeek()
+        seekThumbCache.evictAll()
         finished = false
         requestedPause = false
         Library.videoPlaybackActive.value = item.audio.not()
@@ -689,6 +690,46 @@ class PlaybackService : Service() {
         }
         updateSession()
         return true
+    }
+
+    private val seekThumbCache = object : android.util.LruCache<Long, android.graphics.Bitmap>(16) {}
+
+    fun seekThumbnail(position: Long): android.graphics.Bitmap? {
+        if (released) return null
+        val item = state.value.item ?: return null
+        if (item.audio) return null
+        val bucket = (position / 1000L) * 1000L
+        seekThumbCache.get(bucket)?.let { return it }
+        return try {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                val uri = Uri.parse(item.uri)
+                var frame: android.graphics.Bitmap? = null
+                if (uri.scheme == "content") {
+                    contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                        retriever.setDataSource(fd.fileDescriptor)
+                        frame = if (Build.VERSION.SDK_INT >= 27) {
+                            retriever.getScaledFrameAtTime(position * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 90)
+                        } else {
+                            retriever.getFrameAtTime(position * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        }
+                    }
+                } else if (uri.scheme == "file") {
+                    retriever.setDataSource(uri.path)
+                    frame = if (Build.VERSION.SDK_INT >= 27) {
+                        retriever.getScaledFrameAtTime(position * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 90)
+                    } else {
+                        retriever.getFrameAtTime(position * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    }
+                }
+                if (frame != null) {
+                    seekThumbCache.put(bucket, frame)
+                }
+                frame
+            } finally {
+                retriever.release()
+            }
+        } catch (_: Exception) { null }
     }
 
     fun rate(value: Float) {

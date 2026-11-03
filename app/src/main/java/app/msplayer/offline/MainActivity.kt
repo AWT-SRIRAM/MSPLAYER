@@ -1098,6 +1098,7 @@ fun App(activity: MainActivity) {
                                 }
                             }
                             deleteTarget = null
+                            Library.invalidateScanCache()
                             activity.reload()
                             refresh++
                             activity.toast("File deleted")
@@ -2035,71 +2036,122 @@ fun PlayerTimeline(service: PlaybackService, dragPosition: Long?, onDrag: (Long?
     // Own the commit value: a tap can finish before the caller recomposes.
     var sliderTarget by remember(service) { mutableStateOf<Long?>(null) }
     LaunchedEffect(state.seekable) { if (!state.seekable) { sliderTarget = null; onDrag(null) } }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp).onGloballyPositioned { service.subtitleControlsTop(it.positionInWindow().y) },
-        verticalAlignment = Alignment.CenterVertically,
+    val seekPos = sliderTarget ?: dragPosition
+    var previewBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(seekPos) {
+        if (seekPos != null) {
+            delay(50)
+            val bmp = withContext(Dispatchers.IO) { service.seekThumbnail(seekPos) }
+            previewBitmap = bmp
+        } else {
+            previewBitmap = null
+        }
+    }
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(durationText(sliderTarget ?: dragPosition ?: state.position), fontSize = 14.sp)
-        Slider(
-            thumb = {
-                Box(
-                    Modifier.size(18.dp)
-                        .background(
-                            if (state.seekable) Accent else Muted,
-                            CircleShape,
+        AnimatedVisibility(
+            visible = seekPos != null && previewBitmap != null,
+            enter = fadeIn(tween(100)),
+            exit = fadeOut(tween(150)),
+        ) {
+            previewBitmap?.let { bitmap ->
+                Card(
+                    modifier = Modifier.padding(bottom = 6.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = .85f)),
+                    border = BorderStroke(1.dp, Color(0x6600A8FF)),
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(4.dp),
+                    ) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Seek preview",
+                            modifier = Modifier
+                                .size(width = 128.dp, height = 72.dp)
+                                .clip(RoundedCornerShape(6.dp)),
+                            contentScale = ContentScale.Crop,
                         )
-                )
-            },
-            track = { slider ->
-                Canvas(Modifier.fillMaxWidth().height(4.dp)) {
-                    val y = size.height / 2
-                    drawLine(
-                        Color.Gray,
-                        androidx.compose.ui.geometry.Offset(0f, y),
-                        androidx.compose.ui.geometry.Offset(size.width, y),
-                        strokeWidth = 3.dp.toPx(),
-                    )
-                    val fraction =
-                        ((slider.value - slider.valueRange.start) /
-                                (slider.valueRange.endInclusive -
-                                    slider.valueRange.start))
-                            .coerceIn(0f, 1f)
-                    drawLine(
-                        Accent,
-                        androidx.compose.ui.geometry.Offset(0f, y),
-                        androidx.compose.ui.geometry.Offset(
-                            size.width * fraction,
-                            y,
-                        ),
-                        strokeWidth = 3.dp.toPx(),
-                    )
+                        Text(
+                            durationText(seekPos ?: 0),
+                            fontSize = 11.sp,
+                            color = Accent,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
                 }
-            },
-            value =
-                (sliderTarget ?: dragPosition ?: state.position)
-                    .toFloat()
-                    .coerceIn(0f, state.duration.coerceAtLeast(1).toFloat()),
-            onValueChange = {
-                sliderTarget = it.toLong()
-                onDrag(it.toLong())
-                onTouch()
-            },
-            onValueChangeFinished = {
-                sliderTarget?.let { service.seek(it) }
-                sliderTarget = null
-                onDrag(null)
-            },
-            valueRange = 0f..state.duration.coerceAtLeast(1).toFloat(),
-            enabled = state.seekable,
-            modifier = Modifier.weight(1f).padding(horizontal = 12.dp).semantics { contentDescription = "Playback timeline" },
-            colors =
-                SliderDefaults.colors(
-                    thumbColor = Accent,
-                    activeTrackColor = Accent,
-                    inactiveTrackColor = Color.Gray,
-                ),
-        )
-        Text(durationText(state.duration), fontSize = 14.sp)
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).onGloballyPositioned { service.subtitleControlsTop(it.positionInWindow().y) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(durationText(sliderTarget ?: dragPosition ?: state.position), fontSize = 14.sp)
+            Slider(
+                thumb = {
+                    Box(
+                        Modifier.size(18.dp)
+                            .background(
+                                if (state.seekable) Accent else Muted,
+                                CircleShape,
+                            )
+                    )
+                },
+                track = { slider ->
+                    Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                        val y = size.height / 2
+                        drawLine(
+                            Color.Gray,
+                            androidx.compose.ui.geometry.Offset(0f, y),
+                            androidx.compose.ui.geometry.Offset(size.width, y),
+                            strokeWidth = 3.dp.toPx(),
+                        )
+                        val fraction =
+                            ((slider.value - slider.valueRange.start) /
+                                    (slider.valueRange.endInclusive -
+                                        slider.valueRange.start))
+                                .coerceIn(0f, 1f)
+                        drawLine(
+                            Accent,
+                            androidx.compose.ui.geometry.Offset(0f, y),
+                            androidx.compose.ui.geometry.Offset(
+                                size.width * fraction,
+                                y,
+                            ),
+                            strokeWidth = 3.dp.toPx(),
+                        )
+                    }
+                },
+                value =
+                    (sliderTarget ?: dragPosition ?: state.position)
+                        .toFloat()
+                        .coerceIn(0f, state.duration.coerceAtLeast(1).toFloat()),
+                onValueChange = {
+                    sliderTarget = it.toLong()
+                    onDrag(it.toLong())
+                    onTouch()
+                },
+                onValueChangeFinished = {
+                    sliderTarget?.let { service.seek(it) }
+                    sliderTarget = null
+                    onDrag(null)
+                },
+                valueRange = 0f..state.duration.coerceAtLeast(1).toFloat(),
+                enabled = state.seekable,
+                modifier = Modifier.weight(1f).padding(horizontal = 12.dp).semantics { contentDescription = "Playback timeline" },
+                colors =
+                    SliderDefaults.colors(
+                        thumbColor = Accent,
+                        activeTrackColor = Accent,
+                        inactiveTrackColor = Color.Gray,
+                    ),
+            )
+            Text(durationText(state.duration), fontSize = 14.sp)
+        }
     }
 
 }

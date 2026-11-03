@@ -185,9 +185,23 @@ object Library {
             }
         }
 
-    suspend fun scan(context: Context, audio: Boolean): List<MediaItem> =
+    @Volatile private var lastVideoScanEpoch = 0L
+    @Volatile private var lastAudioScanEpoch = 0L
+    private var cachedVideos: List<MediaItem> = emptyList()
+    private var cachedAudio: List<MediaItem> = emptyList()
+
+    fun invalidateScanCache() {
+        lastVideoScanEpoch = 0L
+        lastAudioScanEpoch = 0L
+        cachedVideos = emptyList()
+        cachedAudio = emptyList()
+    }
+
+    suspend fun scan(context: Context, audio: Boolean, forceFull: Boolean = false): List<MediaItem> =
         withContext(Dispatchers.IO) {
             awaitIdle()
+            val lastEpoch = if (audio) lastAudioScanEpoch else lastVideoScanEpoch
+            val cached = if (audio) cachedAudio else cachedVideos
             val base =
                 if (audio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
                 else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -196,6 +210,77 @@ object Library {
             if (android.os.Build.VERSION.SDK_INT >= 29) projection += "relative_path"
             else projection += "_data"
             if (!audio) projection += listOf("width", "height")
+
+            if (!forceFull && lastEpoch > 0L && cached.isNotEmpty()) {
+                val updated = ArrayList<MediaItem>()
+                try {
+                    context.contentResolver
+                        .query(
+                            base,
+                            projection.toTypedArray(),
+                            "date_modified > ?",
+                            arrayOf(lastEpoch.toString()),
+                            "date_added DESC"
+                        )
+                        ?.use { cursor ->
+                            fun str(name: String) =
+                                cursor.getColumnIndex(name).let {
+                                    if (it >= 0) cursor.getString(it) ?: "" else ""
+                                }
+                            fun num(name: String) =
+                                cursor.getColumnIndex(name).let {
+                                    if (it >= 0) cursor.getLong(it) else 0L
+                                }
+                            while (cursor.moveToNext()) {
+                                val folder =
+                                    if (android.os.Build.VERSION.SDK_INT >= 29)
+                                        str("relative_path").trimEnd('/').ifBlank { "Storage" }
+                                    else
+                                        str("_data")
+                                            .substringBeforeLast('/')
+                                            .substringAfterLast('/')
+                                            .ifBlank { "Storage" }
+                                updated +=
+                                    MediaItem(
+                                        ContentUris.withAppendedId(base, num("_id")).toString(),
+                                        str("_display_name"),
+                                        folder,
+                                        num("_size"),
+                                        num("duration"),
+                                        num("width").toInt(),
+                                        num("height").toInt(),
+                                        num("date_added"),
+                                        audio,
+                                        num("date_modified"),
+                                    )
+                            }
+                        }
+                } catch (_: SecurityException) {
+                }
+
+                val currentIds = HashSet<String>()
+                try {
+                    context.contentResolver.query(base, arrayOf("_id"), null, null, null)?.use { cursor ->
+                        while (cursor.moveToNext()) {
+                            currentIds += ContentUris.withAppendedId(base, cursor.getLong(0)).toString()
+                        }
+                    }
+                } catch (_: SecurityException) {
+                }
+
+                if (updated.isNotEmpty() || (currentIds.isNotEmpty() && currentIds.size != cached.size)) {
+                    val updatedUris = updated.map { it.uri }.toSet()
+                    val merged = cached.filter { it.uri !in updatedUris && it.uri in currentIds } + updated
+                    val result = merged.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
+                    val now = System.currentTimeMillis() / 1000L
+                    if (audio) { cachedAudio = result; lastAudioScanEpoch = now }
+                    else { cachedVideos = result; lastVideoScanEpoch = now }
+                    return@withContext result
+                } else if (currentIds.isNotEmpty()) {
+                    return@withContext cached
+                }
+            }
+
             val items = ArrayList<MediaItem>()
             try {
                 context.contentResolver
@@ -236,6 +321,9 @@ object Library {
             } catch (_: SecurityException) {
                 /* Restricted access can expose only the granted subset. */
             }
+            val now = System.currentTimeMillis() / 1000L
+            if (audio) { cachedAudio = items; lastAudioScanEpoch = now }
+            else { cachedVideos = items; lastVideoScanEpoch = now }
             items
         }
 
@@ -277,8 +365,13 @@ object Library {
             MediaItem(uri.toString(), name, size = size, audio = audio)
         }
 
+    private fun adaptiveCacheSize(): Int {
+        val maxHeap = Runtime.getRuntime().maxMemory()
+        return (maxHeap / 8).toInt().coerceIn(8 * 1024 * 1024, 64 * 1024 * 1024)
+    }
+
     private val thumbs =
-        object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        object : LruCache<String, Bitmap>(adaptiveCacheSize()) {
             override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
         }
 
