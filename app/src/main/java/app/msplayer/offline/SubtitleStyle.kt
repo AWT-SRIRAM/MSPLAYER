@@ -5,8 +5,8 @@ import kotlin.math.roundToInt
 
 /** Plain-text appearance only. Authored ASS and bitmap subtitles remain native. */
 data class SubtitleStyle(
-    val size: Int = 23, val bold: Boolean = true, val outline: Int = 0,
-    val shadow: Int = 140, val shadowOffset: Int = 2, val lineSpacing: Int = 138,
+    val size: Int = 23, val bold: Boolean = true, val outline: Int = 2,
+    val shadow: Int = 140, val shadowOffset: Int = 2, val lineSpacing: Int = 100,
     val bottomMargin: Int = 0, val legacyMargin: Int? = null,
     val font: String = "Default", val scale: Int = 100,
     val color: Int = 0xFFFFFF, val background: Boolean = false,
@@ -89,9 +89,9 @@ data class SubtitleStyle(
                 return preserved
             }
             return SubtitleStyle(size=p.getInt("subtitle_size",23).coerceIn(10,60),bold=p.getBoolean("subtitle_bold",true),
-                outline=p.getInt("subtitle_outline",0).coerceIn(0,6),shadow=p.getInt("subtitle_shadow",140).coerceIn(0,255),
+                outline=p.getInt("subtitle_outline",2).coerceIn(0,6),shadow=p.getInt("subtitle_shadow",140).coerceIn(0,255),
                 shadowOffset=p.getInt("subtitle_shadow_offset",2).coerceIn(0,10),
-                lineSpacing=p.getInt("subtitle_line_spacing",138).coerceIn(80,200),
+                lineSpacing=p.getInt("subtitle_line_spacing",100).coerceIn(80,200),
                 bottomMargin=p.getInt("subtitle_bottom_percent",0).coerceIn(0,40),
                 legacyMargin=p.getInt("subtitle_legacy_margin",-1).takeIf {it>=0},font=font,
                 scale=p.getInt("subtitle_scale",100).coerceIn(50,300),color=p.getInt("subtitle_color",0xFFFFFF),

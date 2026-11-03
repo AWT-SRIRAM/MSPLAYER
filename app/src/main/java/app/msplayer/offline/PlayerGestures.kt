@@ -122,7 +122,7 @@ fun Modifier.videoGestures(
                     if(event.changes.none { it.pressed }) {
                         if(mode==1) service.seek(target)
                         if(mode==6) SubtitleStyle.load(activity).copy(bottomMargin=currentSubBottom).save(activity)
-                        if(mode==7) SubtitleStyle.load(activity).copy(scale=currentSubScale.toInt()).save(activity)
+                        if(mode==7) { val s = SubtitleStyle.load(activity).copy(scale=currentSubScale.toInt()); service.subtitleStyle(s) }
                         if(mode==0) {
                             if(start-lastTap<300 && (down.position-lastPoint).getDistance()<80.dp.toPx()) {
                                 val seconds=Store.prefs(activity).getInt("double_tap",10)*(if(down.position.x<size.width/2) -1 else 1)

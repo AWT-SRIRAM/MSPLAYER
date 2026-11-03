@@ -95,14 +95,8 @@ class PlaybackService : Service() {
             // New presets remove it; migrated custom layouts retain their exact offset.
             val nativeInset = if (state.value.plainSubtitle && style.compensateNativeInset && style.legacyMargin == null) .04f else 0f
             surface.translationY = surface.height * (nativeInset - fraction)
-            if (state.value.plainSubtitle) {
-                val lineScale = (style.lineSpacing / 100f).coerceIn(0.8f, 2.0f)
-                surface.pivotY = surface.height.toFloat()
-                surface.pivotX = surface.width / 2f
-                surface.scaleY = lineScale
-            } else {
-                surface.scaleY = 1f
-            }
+            surface.scaleX = 1f
+            surface.scaleY = 1f
         }
     }
 

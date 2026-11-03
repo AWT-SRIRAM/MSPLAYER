@@ -4,8 +4,8 @@ import org.junit.Test
 class SubtitleStyleTest {
     private val font=SubtitleFont("Test","sans-serif",true)
     @Test fun defaultsAndBounds() {
-        val d=SubtitleStyle();assertEquals(23,d.size);assertEquals(100,d.textScale);assertEquals(0,d.outline)
-        assertEquals(138,d.lineSpacing);assertEquals(2,d.shadowOffset)
+        val d=SubtitleStyle();assertEquals(23,d.size);assertEquals(100,d.textScale);assertEquals(2,d.outline)
+        assertEquals(100,d.lineSpacing);assertEquals(2,d.shadowOffset)
         val o=SubtitleStyle(size=99,scale=999,outline=99,shadow=-2,shadowOffset=99).renderOptions(font)
         assertTrue(o.contains("--freetype-rel-fontsize=17"));assertTrue(o.contains("--sub-text-scale=500"))
         assertTrue(o.contains("--freetype-outline-thickness=6"));assertTrue(o.contains("--freetype-shadow-opacity=0"))
