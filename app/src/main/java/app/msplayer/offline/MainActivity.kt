@@ -1651,6 +1651,11 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
             update = { service.updateSubtitlePlacement(controls && !activity.inPip) },
             onRelease = { service.detachVideo() },
         )
+        NativeSubtitleOverlay(
+            service = service,
+            controlsVisible = controls && !activity.inPip,
+            modifier = Modifier.fillMaxSize(),
+        )
         if (state.item?.audio == true)
             Column(
                 Modifier.align(Alignment.Center),
@@ -2154,4 +2159,32 @@ fun PlayerTimeline(service: PlaybackService, dragPosition: Long?, onDrag: (Long?
         }
     }
 
+}
+
+@Composable
+fun NativeSubtitleOverlay(
+    service: PlaybackService,
+    controlsVisible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val subtitleText by service.activeSubtitleText.collectAsState()
+    val revision by service.subtitleStyleRevision.collectAsState()
+    val context = LocalContext.current
+    val style = remember(service, revision) { SubtitleStyle.load(context) }
+
+    if (!subtitleText.isNullOrBlank()) {
+        AndroidView(
+            factory = { ctx ->
+                StrokeView(ctx).apply {
+                    applyStyle(style, controlsVisible)
+                    setSubtitleText(subtitleText)
+                }
+            },
+            update = { view ->
+                view.applyStyle(style, controlsVisible)
+                view.setSubtitleText(subtitleText)
+            },
+            modifier = modifier,
+        )
+    }
 }

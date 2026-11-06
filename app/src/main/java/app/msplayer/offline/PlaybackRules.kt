@@ -140,12 +140,60 @@ object PlaybackRules {
             else -> codec.trim().uppercase().take(7)
         }
 
+    data class SubtitleCue(
+        val startMs: Long,
+        val endMs: Long,
+        val text: String,
+    )
+
+    fun parseSubtitleCues(raw: String): List<SubtitleCue> {
+        val cues = ArrayList<SubtitleCue>()
+        val lines = raw.lines()
+        var i = 0
+        val timeRegex = Regex("""(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})""")
+        val ssaRegex = Regex("""^Dialogue:\s*\d+,(\d+):(\d{2}):(\d{2})\.(\d{2}),(\d+):(\d{2}):(\d{2})\.(\d{2}),[^,]*?,[^,]*?,[^,]*?,[^,]*?,[^,]*?,[^,]*?,(.*)$""")
+
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            val match = timeRegex.find(line)
+            if (match != null) {
+                val (h1, m1, s1, ms1, h2, m2, s2, ms2) = match.destructured
+                val startMs = h1.toLong() * 3600000L + m1.toLong() * 60000L + s1.toLong() * 1000L + ms1.toLong()
+                val endMs = h2.toLong() * 3600000L + m2.toLong() * 60000L + s2.toLong() * 1000L + ms2.toLong()
+                i++
+                val textBuilder = StringBuilder()
+                while (i < lines.size && lines[i].trim().isNotEmpty()) {
+                    val textLine = lines[i].trim()
+                    if (textLine.matches(Regex("""^\d+$""")) && i + 1 < lines.size && timeRegex.containsMatchIn(lines[i + 1])) {
+                        break
+                    }
+                    if (textBuilder.isNotEmpty()) textBuilder.append("\n")
+                    textBuilder.append(textLine)
+                    i++
+                }
+                if (textBuilder.isNotEmpty()) {
+                    cues += SubtitleCue(startMs, endMs, textBuilder.toString())
+                }
+                continue
+            }
+
+            val ssaMatch = ssaRegex.find(line)
+            if (ssaMatch != null) {
+                val (h1, m1, s1, cs1, h2, m2, s2, cs2, text) = ssaMatch.destructured
+                val startMs = h1.toLong() * 3600000L + m1.toLong() * 60000L + s1.toLong() * 1000L + cs1.toLong() * 10L
+                val endMs = h2.toLong() * 3600000L + m2.toLong() * 60000L + s2.toLong() * 1000L + cs2.toLong() * 10L
+                val cleanText = text.replace(Regex("""\{[^}]*\}"""), "").replace("\\N", "\n").replace("\\n", "\n").trim()
+                if (cleanText.isNotEmpty()) {
+                    cues += SubtitleCue(startMs, endMs, cleanText)
+                }
+            }
+            i++
+        }
+        return cues.sortedBy { it.startMs }
+    }
+
     fun parseCueTimestamps(text: String): List<Long> {
-        val regex = Regex("""(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->""")
-        return regex.findAll(text).map { match ->
-            val (h, m, s, ms) = match.destructured
-            h.toLong() * 3600000L + m.toLong() * 60000L + s.toLong() * 1000L + ms.toLong()
-        }.sorted().distinct().toList()
+        return parseSubtitleCues(text).map { it.startMs }.sorted().distinct()
     }
 
     fun findNextCue(cues: List<Long>, currentMs: Long): Long? =

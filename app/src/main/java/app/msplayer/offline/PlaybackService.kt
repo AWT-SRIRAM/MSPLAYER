@@ -50,6 +50,9 @@ class PlaybackService : Service() {
     private val binder = LocalBinder()
     val state = MutableStateFlow(PlayerState())
     val timeline = MutableStateFlow(PlaybackTimeline())
+    val activeSubtitleText = MutableStateFlow<String?>(null)
+    val subtitleStyleRevision = MutableStateFlow(0)
+    private var parsedCues: List<PlaybackRules.SubtitleCue> = emptyList()
     private var released = false
     private var controlsVisible = true
     private var subtitleControlsTop: Float? = null
@@ -353,6 +356,15 @@ class PlaybackService : Service() {
                                 seekable = player.isSeekable,
                             )
                         timeline.value = PlaybackTimeline(state.value.position, state.value.duration, state.value.seekable, seekTarget != null)
+                        if (parsedCues.isNotEmpty()) {
+                            val pos = state.value.position
+                            val cue = parsedCues.firstOrNull { pos in it.startMs..it.endMs }
+                            if (activeSubtitleText.value != cue?.text) {
+                                activeSubtitleText.value = cue?.text
+                            }
+                        } else if (activeSubtitleText.value != null) {
+                            activeSubtitleText.value = null
+                        }
                         Library.videoPlaybackActive.value = videoAttached && state.value.item?.audio == false
                         if (repeatB != null && state.value.position >= repeatB!! && player.isPlaying) seek(repeatA ?: 0, false)
                         updateSession()
@@ -520,8 +532,43 @@ class PlaybackService : Service() {
         clearSeek()
         seekThumbCache.evictAll()
         finished = false
+        activeSubtitleText.value = null
+        parsedCues = emptyList()
+        activeCues = emptyList()
         requestedPause = false
         Library.videoPlaybackActive.value = item.audio.not()
+        // Auto-detect matching subtitle in folder
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val uri = Uri.parse(item.uri)
+                var subText: String? = null
+                if (uri.scheme == "file") {
+                    val file = java.io.File(uri.path ?: "")
+                    val base = file.nameWithoutExtension
+                    file.parentFile?.listFiles()?.firstOrNull { f ->
+                        f.isFile && f.extension.lowercase() in listOf("srt", "vtt", "ass", "ssa") &&
+                        (f.nameWithoutExtension.equals(base, ignoreCase = true) || f.nameWithoutExtension.startsWith(base, ignoreCase = true))
+                    }?.let { subText = it.readText() }
+                } else {
+                    val base = item.title.substringBeforeLast('.')
+                    val moviesDir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "Movies")
+                    val dlDir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "Download")
+                    listOf(moviesDir, dlDir).forEach { dir ->
+                        if (subText == null && dir.isDirectory) {
+                            dir.listFiles()?.firstOrNull { f ->
+                                f.isFile && f.extension.lowercase() in listOf("srt", "vtt", "ass", "ssa") &&
+                                (f.nameWithoutExtension.equals(base, ignoreCase = true) || f.nameWithoutExtension.startsWith(base, ignoreCase = true))
+                            }?.let { subText = it.readText() }
+                        }
+                    }
+                }
+                subText?.let { text ->
+                    withContext(Dispatchers.Main) {
+                        loadCues(text)
+                    }
+                }
+            }
+        }
         opening =
             scope.launch {
                 val saved =
@@ -669,6 +716,10 @@ class PlaybackService : Service() {
         if (result < 0) { clearSeek(); return false }
         state.value = state.value.copy(position = target)
         timeline.value = PlaybackTimeline(target, player.length, true, true)
+        if (parsedCues.isNotEmpty()) {
+            val cue = parsedCues.firstOrNull { target in it.startMs..it.endMs }
+            activeSubtitleText.value = cue?.text
+        }
         diagnostics.event("seek-request from=$seekOrigin target=$target fast=$fast")
         if (fast) seekCorrection = scope.launch {
             delay(900)
@@ -839,7 +890,11 @@ class PlaybackService : Service() {
     private var activeCues: List<Long> = emptyList()
 
     fun loadCues(text: String) {
-        activeCues = PlaybackRules.parseCueTimestamps(text)
+        parsedCues = PlaybackRules.parseSubtitleCues(text)
+        activeCues = parsedCues.map { it.startMs }
+        if (parsedCues.isNotEmpty()) {
+            player.spuTrack = -1
+        }
     }
 
     fun seekCue(forward: Boolean): Boolean {
@@ -875,6 +930,7 @@ class PlaybackService : Service() {
         val previous = SubtitleStyle.load(this)
         if (previous == style) return
         style.save(this)
+        subtitleStyleRevision.value++
         if (previous.options() == style.options()) {
             updateSubtitlePlacement(controlsVisible)
             return
@@ -904,12 +960,14 @@ class PlaybackService : Service() {
     fun updateSubtitlePosition(bottomPercent: Int) {
         val style = SubtitleStyle.load(this).copy(bottomMargin = bottomPercent.coerceIn(0, 40), legacyMargin = null)
         style.save(this)
+        subtitleStyleRevision.value++
         updateSubtitlePlacement(controlsVisible)
     }
 
     fun updateSubtitleScale(scalePercent: Int) {
         val style = SubtitleStyle.load(this).copy(scale = scalePercent.coerceIn(50, 300))
         style.save(this)
+        subtitleStyleRevision.value++
         val layout = videoLayout ?: return
         layout.post {
             val surface = layout.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles) ?: return@post
