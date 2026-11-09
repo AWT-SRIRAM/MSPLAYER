@@ -9,6 +9,7 @@ local.properties
 **/.kotlin/
 **/.gradle/
 *.apk
+!release/*.apk
 *.aab
 *.apks
 *.apkm

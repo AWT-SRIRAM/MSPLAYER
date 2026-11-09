@@ -4,6 +4,13 @@ Offline-first, ad-free Android multimedia player built with Kotlin, Jetpack Comp
 
 Primary device target: iQOO Neo10R running Android 16. Minimum Android API 26; compile/target API 36.
 
+## Download APK
+
+- **Latest Signed ARM64 APK (`v0.6.1`, 64.8 MB)**: [**Download `MS-PLAYER-0.6.1-arm64.apk`**](https://github.com/AWT-SRIRAM/MSPLAYER/raw/main/release/MS-PLAYER-0.6.1-arm64.apk) ([view in `release/`](release/MS-PLAYER-0.6.1-arm64.apk))
+  - SHA-256: `ea3897a20f9cd3c91595c1995791ab2f8617d069e12b95218bcc8266b9f7d100`
+- Requires Android 8.0+ (API 26) on ARM64 (`arm64-v8a`).
+- The public APK bundles **no preconfigured API keys** — all local video/audio playback, multi-subtitle tracks, `.srt`/`.zip` subtitles, music player, Liquid Glass UI, gestures, and network streaming work out of the box. For optional AI Subtitles, add your own free key inside `Settings -> API Keys` on the device.
+
 ## Features
 
 - Local video/audio library, folders, dismissible Recently Added row (per-item remove, clear, and Settings restore), playlists, resume playback, video thumbnails, and seek preview thumbnails.
@@ -56,7 +63,7 @@ Omit `-PtestAbi` for an ARM64 device. Instrumentation fixtures live in `app/src/
 Supply your own signing key (alias `msplayer`) through `MSPLAYER_KEYSTORE` and `MSPLAYER_STORE_PASSWORD`, then run:
 
 ```powershell
-.\gradlew.bat assembleRelease testReleaseUnitTest lintRelease
+.\gradlew.bat assembleRelease testReleaseUnitTest lintRelease -PpublicRelease=true
 ```
 
 The original signing key is excluded. An independently signed APK cannot update an installation signed with another certificate.

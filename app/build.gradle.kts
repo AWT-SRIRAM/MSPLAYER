@@ -10,7 +10,9 @@ val localProps = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.isFile) file.inputStream().use { load(it) }
 }
+val isPublicRelease = project.findProperty("publicRelease")?.toString()?.toBoolean() == true
 fun localSecret(name: String): String {
+    if (isPublicRelease) return ""
     val raw = localProps.getProperty(name) ?: System.getenv(name) ?: ""
     return raw.replace("\\", "\\\\").replace("\"", "\\\"")
 }
