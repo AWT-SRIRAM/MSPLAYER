@@ -13,6 +13,7 @@ data class SubtitleStyle(
     val backgroundColor: Int = 0, val backgroundOpacity: Int = 128,
     val borderColor: Int = 0, val borderOpacity: Int = 204,
     val encoding: String = "", val compensateNativeInset: Boolean = true, val legacyFontFamily: String? = null,
+    val secondaryTop: Boolean = false,
 ) {
     val textScale: Int get() = (scale.coerceIn(50, 300) * size.coerceIn(10, 60) / 23f).roundToInt().coerceIn(10, 500)
     fun options(): List<String> = renderOptions(SubtitleFonts.resolve(font).let { resolved -> legacyFontFamily?.let { resolved.copy(family=it) } ?: resolved })
@@ -50,7 +51,8 @@ data class SubtitleStyle(
             .putInt("subtitle_background_opacity", backgroundOpacity.coerceIn(0, 255))
             .putInt("subtitle_border_color", borderColor and 0xFFFFFF)
             .putInt("subtitle_border_opacity", borderOpacity.coerceIn(0, 255))
-            .putString("subtitle_encoding", encoding.takeIf { it in encodings.values } ?: "").apply()
+            .putString("subtitle_encoding", encoding.takeIf { it in encodings.values } ?: "")
+            .putBoolean("subtitle_secondary_top", secondaryTop).apply()
     }
     companion object {
         val encodings = linkedMapOf("Auto" to "", "UTF-8" to "UTF-8", "UTF-16" to "UTF-16",
@@ -99,7 +101,8 @@ data class SubtitleStyle(
                 backgroundOpacity=p.getInt("subtitle_background_opacity",128),borderColor=p.getInt("subtitle_border_color",0),
                 borderOpacity=p.getInt("subtitle_border_opacity",204),encoding=p.getString("subtitle_encoding","") ?: "",
                 compensateNativeInset=p.getBoolean("subtitle_compensate_inset",true),
-                legacyFontFamily=p.getString("subtitle_legacy_font_family",null))
+                legacyFontFamily=p.getString("subtitle_legacy_font_family",null),
+                secondaryTop=p.getBoolean("subtitle_secondary_top",false))
         }
     }
 }

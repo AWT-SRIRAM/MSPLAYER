@@ -28,6 +28,12 @@ AndroidX includes its graphics-path native library; this is independently checke
 Apache License 2.0.
 Sources: https://github.com/JetBrains/kotlin and https://github.com/Kotlin/kotlinx.coroutines .
 
+## AndroidLiquidGlass (Backdrop) — Kyant0 and contributors
+
+Artifact: `io.github.kyant0:backdrop:1.0.0` from Maven Central.
+License: Apache License 2.0. Full text: `app/src/main/assets/licenses/Apache-2.0.txt`.
+Source: https://github.com/Kyant0/AndroidLiquidGlass .
+
 ## Reference launcher icon
 
 The user explicitly requested the blue play-button logo from their supplied MX Player reference. The launcher PNG was taken from that supplied APKM's `icon.png`. It is a third-party reference asset, not MS PLAYER's original artwork, and is excluded from the application's own source license grant. The application name, package and signing identity are MS PLAYER's separate identity. Other interface icons are Material icons supplied through AndroidX.

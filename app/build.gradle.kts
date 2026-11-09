@@ -1,8 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.isFile) file.inputStream().use { load(it) }
+}
+fun localSecret(name: String): String {
+    val raw = localProps.getProperty(name) ?: System.getenv(name) ?: ""
+    return raw.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
 android {
     namespace = "app.msplayer.offline"
     compileSdk = 36
@@ -10,11 +22,15 @@ android {
         applicationId = "app.msplayer.offline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.6.0"
+        versionCode = 8
+        versionName = "0.6.1"
         ndk { abiFilters += (project.findProperty("testAbi")?.toString() ?: "arm64-v8a") }
         testInstrumentationRunner = "app.msplayer.offline.SafeTestRunner"
         manifestPlaceholders["appLabel"] = "MS PLAYER"
+        buildConfigField("String", "DEFAULT_GROQ_KEY", "\"${localSecret("MSPLAYER_GROQ_KEY")}\"")
+        buildConfigField("String", "DEFAULT_DEEPGRAM_KEY", "\"${localSecret("MSPLAYER_DEEPGRAM_KEY")}\"")
+        buildConfigField("String", "DEFAULT_CLOUDFLARE_TOKEN", "\"${localSecret("MSPLAYER_CLOUDFLARE_TOKEN")}\"")
+        buildConfigField("String", "DEFAULT_OPENSUBTITLES_KEY", "\"${localSecret("MSPLAYER_OPENSUBTITLES_KEY")}\"")
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -45,6 +61,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.fragment:fragment-ktx:1.8.8")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("io.github.kyant0:backdrop:1.0.0")
     implementation("androidx.room:room-runtime:2.7.1")
     annotationProcessor("androidx.room:room-compiler:2.7.1")
     if(project.findProperty("localVlcAar") != null) {

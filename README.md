@@ -1,25 +1,38 @@
 # MS PLAYER
 
-Offline, ad-free Android multimedia player built with Kotlin, Jetpack Compose, and LibVLC Android 3.7.7. Current review source: **0.5.0**, versionCode **6**, package `app.msplayer.offline`.
+Offline-first, ad-free Android multimedia player built with Kotlin, Jetpack Compose, AndroidLiquidGlass, and LibVLC Android 3.7.7. Current version: **0.6.1**, versionCode **8**, package `app.msplayer.offline`.
 
 Primary device target: iQOO Neo10R running Android 16. Minimum Android API 26; compile/target API 36.
 
 ## Features
 
-- Local video/audio library, folders, playlists, history, resume, and video thumbnails.
-- Hardware-first playback with Auto, Hardware, and Software decoder modes.
-- SRT/ASS/PGS selection, subtitle delays, appearance controls, and available Android font families.
+- Local video/audio library, folders, Recent Carousel, playlists, resume playback, video thumbnails, and seek preview thumbnails.
+- Liquid Glass theme (`io.github.kyant0:backdrop:1.0.0`) with live optical refraction, frosted dock pills, Apple iOS-style interactive springs (`iosLiquidPress`), `SharedTransitionLayout` audio mini-player morph, adaptive album-art mood glow, and Android 12+ (`API 31+`) window blur-behind player dialogs (toggleable in Settings).
+- Direct one-tap Aspect Ratio cycling (`Best fit` -> `Crop` -> `Stretch` -> `16:9` -> `4:3` -> `Original`) with frosted HUD indicator.
+- Network URL streaming (`HTTP`, `HTTPS`, `HLS .m3u8`, `DASH .mpd`, `RTSP`, `RTMP`) with clipboard auto-detection, share-sheet `ACTION_SEND` intake, and persistent Recent Streams history.
+- Hardware-first playback with Auto, Hardware, HW+, and Software decoder modes.
+- Simultaneous multi-subtitle selection (unlimited 2, 3, 4, 5+ tracks at once), buffered MKV track demuxing (`file://` and `content://`), `.zip` subtitle archive extraction, OpenSubtitles.org search & browser import with 64-bit `moviehash` matching, folder sidecar auto-discovery, pixel-locked single-layout Canvas outline/fill rendering (`StrokeView`), and optional top docking for secondary tracks.
+- Optional AI Subtitles (Speech-to-Text): automatically prioritizes English audio tracks on dual-audio containers, compresses stereo/multi-channel tracks into lightweight 28 kbps Mono AAC `.m4a` chunks (`<= 12 MB / 15 min` to handle 34 MB–1 GB+ files cleanly), rotates comma-separated API keys with backup failover, and saves persistent onset-locked `.srt` subtitles next to your media.
 - Swipe seeking, pinch zoom, left-side brightness and right-side volume gestures, with opposite-side feedback indicators.
-- Hold for 400 ms and drag horizontally for temporary 0.25x-4x speed; release restores the previous rate.
+- Hold for 400 ms and drag horizontally for temporary 0.25x–4.0x speed using an aligned frosted ruler that smoothly morphs into a compact speed status capsule.
 - Volume gain up to 200%, audio effects, and manual equalizer.
-- Record-style music screen, artwork/metadata, queue, shuffle/repeat, favourites, A-B controls, offline USLT/LRC/text lyrics, and mini-player.
+- Record-style music screen with blurred album-art backdrop, queue, shuffle/repeat, favourites, A-B controls, offline USLT/LRC/text lyrics, and mini-player.
 - Picture-in-picture, optional background audio, and explicit resource cleanup on Exit/task removal.
 
-The app requests no Internet permission and includes no advertising service. The interface was developed using user-supplied MX Player references; this is an independent implementation and is not affiliated with MX Player.
+No tracking or advertising services are included (`android.permission.INTERNET` is used only if you trigger AI Subtitles, OpenSubtitles search, or open a network stream URL). The interface was developed using user-supplied MX Player references; this is an independent implementation and is not affiliated with MX Player.
 
 ## Build
 
 Install JDK 17 and Android SDK API 36 with Build Tools 36.0.0. Configure `JAVA_HOME` and `ANDROID_HOME`, or provide an untracked `local.properties` with `sdk.dir=<SDK path>`. Gradle requires Internet access on the build computer to resolve dependencies.
+
+Optional API keys can be entered inside `Settings -> API Keys` (or the OpenSubtitles dialog) on the device, or supplied at build time in your untracked `local.properties` (never committed to git):
+
+```properties
+sdk.dir=C:\\path\\to\\Android\\Sdk
+MSPLAYER_GROQ_KEY=
+MSPLAYER_DEEPGRAM_KEY=
+MSPLAYER_OPENSUBTITLES_KEY=
+```
 
 ```powershell
 .\gradlew.bat assembleDebug testDebugUnitTest lintDebug
@@ -27,7 +40,7 @@ Install JDK 17 and Android SDK API 36 with Build Tools 36.0.0. Configure `JAVA_H
 
 On macOS/Linux, use `./gradlew`. Debug installs as `app.msplayer.offline.debug` (MS PLAYER DEBUG), separately from the everyday app. The test runner refuses the release package. Default native ABI is ARM64; debug APK output is `app/build/outputs/apk/debug/app-debug.apk`.
 
-Pinned tooling: Gradle 8.11.1, AGP 8.10.1, Kotlin/Compose compiler 2.1.20. Gradle wrapper and distribution checksum are included.
+Pinned tooling: Gradle 8.11.1, AGP 8.10.1, Kotlin/Compose compiler 2.2.21, `io.github.kyant0:backdrop:1.0.0`. Gradle wrapper and distribution checksum are included.
 
 ### Android tests
 

@@ -70,10 +70,28 @@ object Store {
             }
 
     fun prefs(context: Context) = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    fun recentStreams(context: Context): List<String> {
+        val raw = prefs(context).getString("recent_streams_v1", "") ?: return emptyList()
+        return raw.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+    }
+
+    fun recordStream(context: Context, url: String) {
+        val clean = url.trim()
+        if (!PlaybackRules.isStreamUrl(clean)) return
+        val updated = (listOf(clean) + recentStreams(context).filter { it != clean }).take(10)
+        prefs(context).edit().putString("recent_streams_v1", updated.joinToString("\n")).apply()
+    }
+
+    fun removeStream(context: Context, url: String) {
+        val updated = recentStreams(context).filter { it != url.trim() }
+        prefs(context).edit().putString("recent_streams_v1", updated.joinToString("\n")).apply()
+    }
 }
 
 object Library {
     suspend fun videoDimensions(context: Context, uri: String): Pair<Int, Int>? = withContext(Dispatchers.IO) {
+        if (PlaybackRules.isStreamUrl(uri)) return@withContext null
         val retriever = MediaMetadataRetriever()
         try {
             context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.use { descriptor ->
@@ -103,8 +121,9 @@ object Library {
     private suspend fun awaitIdle() { videoPlaybackActive.first { !it } }
     private val metadata = LruCache<String, MediaInfo>(1024)
 
-    suspend fun inspect(context: Context, vlc: LibVLC, item: MediaItem): MediaInfo? =
-        probes.withPermit {
+    suspend fun inspect(context: Context, vlc: LibVLC, item: MediaItem): MediaInfo? {
+        if (PlaybackRules.isStreamUrl(item.uri)) return null
+        return probes.withPermit {
             awaitIdle()
             val key = "v4|${item.uri}|${item.size}|${item.modified}|${item.added}|${thumbnailRevision.value}"
             metadata.get(key)?.let {
@@ -184,6 +203,7 @@ object Library {
                 }
             }
         }
+    }
 
     @Volatile private var lastVideoScanEpoch = 0L
     @Volatile private var lastAudioScanEpoch = 0L
@@ -338,7 +358,7 @@ object Library {
     suspend fun opened(context: Context, uri: Uri): MediaItem =
         withContext(Dispatchers.IO) {
             if (uri.scheme in listOf("http", "https", "rtsp", "rtmp", "mms", "udp")) {
-                val title = uri.lastPathSegment?.substringBefore('?')?.takeIf { it.isNotBlank() } ?: uri.toString()
+                val title = uri.lastPathSegment?.substringBefore('?')?.takeIf { it.isNotBlank() } ?: uri.host ?: uri.toString()
                 return@withContext MediaItem(uri.toString(), title, folder = "Network Streams", size = 0L, audio = false)
             }
             var name = uri.lastPathSegment ?: "Media"
@@ -388,7 +408,7 @@ object Library {
     }
 
     suspend fun thumbnail(context: Context, item: MediaItem): Bitmap? {
-        if (item.audio) return null
+        if (item.audio || PlaybackRules.isStreamUrl(item.uri)) return null
         val key = "v4|${item.uri}|${item.size}|${item.modified}|${item.added}|${thumbnailRevision.value}"
         return thumbLocks[(key.hashCode() and Int.MAX_VALUE) % thumbLocks.size].withLock {
             thumbs.get(key)?.let { return@withLock it }

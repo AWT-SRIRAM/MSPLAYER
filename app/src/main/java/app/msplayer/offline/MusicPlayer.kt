@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.animation.ExperimentalSharedTransitionApi::class,
+)
 package app.msplayer.offline
 
 import android.content.Intent
@@ -7,11 +10,16 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,14 +27,19 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.*
+import kotlin.math.roundToInt
 
 fun java.io.InputStream.readBounded(limit: Int): ByteArray {
     val output=java.io.ByteArrayOutputStream(minOf(limit,8192));val buffer=ByteArray(8192)
@@ -80,22 +93,30 @@ object LocalLyrics {
 }
 
 @Composable
-fun MusicPlayerScreen(activity: MainActivity, service: PlaybackService, state: PlayerState) {
+fun MusicPlayerScreen(
+    activity: MainActivity,
+    service: PlaybackService,
+    state: PlayerState,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
     val item=state.item ?: return
     val timeline by service.timeline.collectAsState()
     val queue by service.queueItems.collectAsState()
     val shuffle by service.shuffleEnabled.collectAsState()
     val repeat by service.repeatMode.collectAsState()
     val ab by service.abPoints.collectAsState()
-    val effects by service.effectSettings.collectAsState()
     var panel by remember { mutableStateOf<String?>(null) }
     var title by remember(item.uri) { mutableStateOf(item.title) }
     var artist by remember(item.uri) { mutableStateOf("Unknown artist") }
     var artwork by remember(item.uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var mood by remember(item.uri) { mutableStateOf(AdaptiveMoodColors()) }
     var lyrics by remember(item.uri) { mutableStateOf<List<LocalLyrics.Line>>(emptyList()) }
     var favourite by remember(item.uri) { mutableStateOf(false) }
     val scope=rememberCoroutineScope()
     var active by remember { mutableStateOf(true) }
+    val dragY = remember { Animatable(0f) }
+
     DisposableEffect(Unit) {
         val observer=androidx.lifecycle.LifecycleEventObserver { _, event -> active=event==androidx.lifecycle.Lifecycle.Event.ON_RESUME || (active && event!=androidx.lifecycle.Lifecycle.Event.ON_PAUSE && event!=androidx.lifecycle.Lifecycle.Event.ON_STOP) }
         activity.lifecycle.addObserver(observer)
@@ -116,7 +137,13 @@ fun MusicPlayerScreen(activity: MainActivity, service: PlaybackService, state: P
                         val options=android.graphics.BitmapFactory.Options().apply { inSampleSize=(maxOf(bounds.outWidth,bounds.outHeight)/720).coerceAtLeast(1) }
                         android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size,options)
                     }
-                    withContext(Dispatchers.Main) { title=t?.takeIf { it.isNotBlank() } ?: item.title;artist=a?.takeIf { it.isNotBlank() } ?: "Unknown artist";artwork=cover }
+                    val extractedMood = extractAdaptiveMoodColors(cover)
+                    withContext(Dispatchers.Main) {
+                        title=t?.takeIf { it.isNotBlank() } ?: item.title
+                        artist=a?.takeIf { it.isNotBlank() } ?: "Unknown artist"
+                        artwork=cover
+                        mood=extractedMood
+                    }
                 }
             } catch(e:CancellationException) { throw e } catch(_:Exception) { } finally { retriever.release() }
             val stored=Store.prefs(activity).getString("lyrics_uri_${item.uri.hashCode()}",null)
@@ -138,27 +165,119 @@ fun MusicPlayerScreen(activity: MainActivity, service: PlaybackService, state: P
     }
     BackHandler { if(panel!=null) panel=null else activity.exitPlayer() }
     val rotation=remember { Animatable(0f) }
-    LaunchedEffect(state.playing,active) {
-        val reduced=android.provider.Settings.Global.getFloat(activity.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)==0f
-        if(state.playing && active && !reduced) while(isActive) { rotation.animateTo(rotation.value+360, tween(18000,easing=LinearEasing));rotation.snapTo(rotation.value%360) }
+    val animationsOn = rememberAnimationsEnabled()
+    LaunchedEffect(state.playing, active, animationsOn) {
+        if(state.playing && active && animationsOn) while(isActive) { rotation.animateTo(rotation.value+360, tween(18000,easing=LinearEasing));rotation.snapTo(rotation.value%360) }
     }
-    Box(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=22.dp),horizontalAlignment=Alignment.CenterHorizontally) {
+    val discScale by animateFloatAsState(
+        targetValue = if (state.playing) 1f else 0.90f,
+        animationSpec = MotionSpec.MorphSpring,
+        label = "discScale",
+    )
+    val dynamicPrimary by animateColorAsState(mood.primary, MotionSpec.ColorSpring, label = "musicPrimary")
+    val dynamicSecondary by animateColorAsState(mood.secondary, MotionSpec.ColorSpring, label = "musicSecondary")
+    val glassEnabled by rememberGlassEnabled()
+    val musicBackdrop = rememberLayerBackdrop()
+
+    val rootMorphModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState("mini_to_music"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> MotionSpec.MorphRectSpring },
+            )
+        }
+    } else Modifier
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .then(rootMorphModifier)
+            .offset { IntOffset(0, dragY.value.roundToInt()) }
+            .background(Color.Black)
+    ) {
+        Box(Modifier.fillMaxSize().layerBackdrop(musicBackdrop)) {
+            LiquidGlassBackdropBackground(
+                enabled = glassEnabled,
+                primaryGlow = dynamicPrimary,
+                secondaryGlow = dynamicSecondary,
+            )
+            val cover = artwork
+            if (glassEnabled && cover != null) {
+                Image(
+                    cover.asImageBitmap(),
+                    null,
+                    Modifier.fillMaxSize().let {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) it.blur(54.dp) else it
+                    },
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    alpha = 0.42f,
+                )
+                Box(Modifier.fillMaxSize().background(Color(0x90040810)))
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            scope.launch {
+                                if (dragY.value > 110.dp.toPx()) activity.exitPlayer()
+                                else dragY.animateTo(0f, MotionSpec.PressSpring)
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch { dragY.animateTo(0f, MotionSpec.PressSpring) }
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            if (dragAmount > 0f || dragY.value > 0f) {
+                                scope.launch { dragY.snapTo((dragY.value + dragAmount).coerceAtLeast(0f)) }
+                            }
+                        },
+                    )
+                }
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal=22.dp),
+            horizontalAlignment=Alignment.CenterHorizontally,
+        ) {
             Row(Modifier.fillMaxWidth().padding(top=8.dp),verticalAlignment=Alignment.CenterVertically) {
-                IconButton(onClick={activity.exitPlayer()}) { Icon(Icons.Default.KeyboardArrowDown,"Back to library") }
+                val backSrc = remember { MutableInteractionSource() }
+                IconButton(
+                    onClick={activity.exitPlayer()},
+                    interactionSource = backSrc,
+                    modifier = Modifier.iosLiquidPress(backSrc, scaleDown = 0.90f),
+                ) { Icon(Icons.Default.KeyboardArrowDown,"Back to library") }
                 Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally) {
                     Text(title,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=20.sp,fontWeight=FontWeight.Bold)
                     Text(artist,color=Color.LightGray,fontSize=14.sp,maxLines=1)
                 }
-                IconButton(onClick={ activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type="audio/*";putExtra(Intent.EXTRA_STREAM,Uri.parse(item.uri));addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) },"Share audio")) }) { Icon(Icons.Default.Share,"Share audio") }
+                val shareSrc = remember { MutableInteractionSource() }
+                IconButton(
+                    onClick={ activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type="audio/*";putExtra(Intent.EXTRA_STREAM,Uri.parse(item.uri));addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) },"Share audio")) },
+                    interactionSource = shareSrc,
+                    modifier = Modifier.iosLiquidPress(shareSrc, scaleDown = 0.90f),
+                ) { Icon(Icons.Default.Share,"Share audio") }
             }
             BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical=24.dp).heightIn(max=440.dp),contentAlignment=Alignment.Center) {
                 val size=maxWidth.coerceAtMost(400.dp)
-                Box(Modifier.size(size).graphicsLayer { rotationZ=rotation.value }.clip(CircleShape).background(Color(0xFF151515)),contentAlignment=Alignment.Center) {
+                Box(
+                    Modifier
+                        .size(size)
+                        .graphicsLayer {
+                            rotationZ=rotation.value
+                            scaleX = discScale
+                            scaleY = discScale
+                        }
+                        .clip(CircleShape)
+                        .background(Color(0xFF151515)),
+                    contentAlignment=Alignment.Center
+                ) {
                     Canvas(Modifier.fillMaxSize()) {
                         val center=androidx.compose.ui.geometry.Offset(this.size.width/2,this.size.height/2)
                         for(i in 0..22) drawCircle(Color(0xFF303030),this.size.minDimension*(.27f+i*.009f),center,style=androidx.compose.ui.graphics.drawscope.Stroke(1f))
-                        drawCircle(Color.DarkGray,this.size.minDimension*.49f,center,style=androidx.compose.ui.graphics.drawscope.Stroke(8f))
+                        drawCircle(dynamicPrimary.copy(alpha = 0.35f),this.size.minDimension*.49f,center,style=androidx.compose.ui.graphics.drawscope.Stroke(6f))
                     }
                     if(artwork!=null) Image(artwork!!.asImageBitmap(),"Album artwork",Modifier.fillMaxSize(.56f).clip(CircleShape),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
                     else Box(Modifier.fillMaxSize(.56f).background(Color(0xFF777777),CircleShape),contentAlignment=Alignment.Center) { Icon(Icons.Default.MusicNote,null,tint=Color(0xFF535353),modifier=Modifier.fillMaxSize(.6f)) }
@@ -171,40 +290,99 @@ fun MusicPlayerScreen(activity: MainActivity, service: PlaybackService, state: P
                     drawCircle(Color.LightGray,w*.025f,androidx.compose.ui.geometry.Offset(w*.65f,h*.04f))
                 }
             }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                IconButton(onClick={panel="Effects"}) { Icon(Icons.Default.Tune,"Audio effects") }
-                IconButton(onClick={service.markAB()}) { Text(if(ab.second!=null) "A↔B" else if(ab.first!=null) "A→" else "A–B",color=if(ab.first!=null) Accent else Color.White) }
-                IconButton(onClick={panel="Speed"}) { Icon(Icons.Default.Speed,"Playback speed") }
-                IconButton(onClick={
-                    favourite=!favourite
-                    val liked=favourite
-                    scope.launch(Dispatchers.IO) { val dao=Store.db(activity).dao(); if(liked) dao.add(PlaylistEntry().apply { playlist="Favorites";uri=item.uri;title=item.title;added=System.currentTimeMillis() }) else dao.remove("Favorites",item.uri) }
-                }) { Icon(if(favourite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,"Favourite",tint=if(favourite) Accent else Color.White) }
-                IconButton(onClick={panel="Options"}) { Icon(Icons.Default.MoreVert,"Music options") }
+            Row(
+                Modifier.fillMaxWidth()
+                    .let { if (glassEnabled) it.liquidGlassSurface(musicBackdrop, true, RoundedCornerShape(24.dp), tint = Color(0x4A0C141F)) else it }
+                    .padding(horizontal = if (glassEnabled) 6.dp else 0.dp, vertical = 2.dp),
+                horizontalArrangement=Arrangement.SpaceBetween,
+            ) {
+                val s1 = remember { MutableInteractionSource() }
+                val s2 = remember { MutableInteractionSource() }
+                val s3 = remember { MutableInteractionSource() }
+                val s4 = remember { MutableInteractionSource() }
+                val s5 = remember { MutableInteractionSource() }
+                IconButton(onClick={panel="Effects"}, interactionSource = s1, modifier = Modifier.iosLiquidPress(s1, scaleDown = 0.88f)) { Icon(Icons.Default.Tune,"Audio effects") }
+                IconButton(onClick={service.markAB()}, interactionSource = s2, modifier = Modifier.iosLiquidPress(s2, scaleDown = 0.88f)) { Text(if(ab.second!=null) "A↔B" else if(ab.first!=null) "A→" else "A–B",color=if(ab.first!=null) dynamicPrimary else Color.White) }
+                IconButton(onClick={panel="Speed"}, interactionSource = s3, modifier = Modifier.iosLiquidPress(s3, scaleDown = 0.88f)) { Icon(Icons.Default.Speed,"Playback speed") }
+                IconButton(
+                    onClick={
+                        favourite=!favourite
+                        val liked=favourite
+                        scope.launch(Dispatchers.IO) { val dao=Store.db(activity).dao(); if(liked) dao.add(PlaylistEntry().apply { playlist="Favorites";uri=item.uri;title=item.title;added=System.currentTimeMillis() }) else dao.remove("Favorites",item.uri) }
+                    },
+                    interactionSource = s4,
+                    modifier = Modifier.iosLiquidPress(s4, scaleDown = 0.88f),
+                ) { Icon(if(favourite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,"Favourite",tint=if(favourite) dynamicPrimary else Color.White) }
+                IconButton(onClick={panel="Options"}, interactionSource = s5, modifier = Modifier.iosLiquidPress(s5, scaleDown = 0.88f)) { Icon(Icons.Default.MoreVert,"Music options") }
             }
             Spacer(Modifier.height(20.dp))
             var target by remember(item.uri) { mutableStateOf<Long?>(null) }
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text(durationText(target?:timeline.position));Text(durationText(timeline.duration)) }
-            Slider(thumb={ Box(Modifier.size(15.dp).background(Accent,CircleShape)) },track={ slider ->
+            Slider(thumb={ Box(Modifier.size(15.dp).background(dynamicPrimary,CircleShape)) },track={ slider ->
                 Canvas(Modifier.fillMaxWidth().height(3.dp)) {
                     val fraction=(slider.value/slider.valueRange.endInclusive.coerceAtLeast(1f)).coerceIn(0f,1f)
                     drawLine(Color.Gray,androidx.compose.ui.geometry.Offset(0f,size.height/2),androidx.compose.ui.geometry.Offset(size.width,size.height/2),3.dp.toPx())
-                    drawLine(Accent,androidx.compose.ui.geometry.Offset(0f,size.height/2),androidx.compose.ui.geometry.Offset(size.width*fraction,size.height/2),3.dp.toPx())
+                    drawLine(dynamicPrimary,androidx.compose.ui.geometry.Offset(0f,size.height/2),androidx.compose.ui.geometry.Offset(size.width*fraction,size.height/2),3.dp.toPx())
                 }
             },value=(target?:timeline.position).toFloat().coerceIn(0f,timeline.duration.coerceAtLeast(1).toFloat()),onValueChange={target=it.toLong()},onValueChangeFinished={target?.let {service.seek(it)};target=null},valueRange=0f..timeline.duration.coerceAtLeast(1).toFloat(),enabled=timeline.seekable)
             Row(Modifier.fillMaxWidth().padding(vertical=10.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
-                IconButton(onClick={service.toggleShuffle()}) { Icon(Icons.Default.Shuffle,"Shuffle",tint=if(shuffle) Accent else Color.White) }
-                IconButton(onClick={service.previous()}) { Icon(Icons.Default.SkipPrevious,"Previous",modifier=Modifier.size(32.dp)) }
-                OutlinedIconButton(onClick={service.toggle()},modifier=Modifier.size(74.dp),border=BorderStroke(2.dp,Color.White)) { Icon(if(state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",modifier=Modifier.size(44.dp)) }
-                IconButton(onClick={service.next()}) { Icon(Icons.Default.SkipNext,"Next",modifier=Modifier.size(32.dp)) }
-                IconButton(onClick={service.setRepeat(when(repeat){"off"->"all";"all"->"one";else->"off"})}) { Icon(if(repeat=="one") Icons.Default.RepeatOne else Icons.Default.Repeat,"Repeat $repeat",tint=if(repeat!="off") Accent else Color.White) }
+                val shSrc = remember { MutableInteractionSource() }
+                val prSrc = remember { MutableInteractionSource() }
+                val plSrc = remember { MutableInteractionSource() }
+                val nxSrc = remember { MutableInteractionSource() }
+                val rpSrc = remember { MutableInteractionSource() }
+
+                IconButton(onClick={service.toggleShuffle()}, interactionSource = shSrc, modifier = Modifier.iosLiquidPress(shSrc, scaleDown = 0.88f)) { Icon(Icons.Default.Shuffle,"Shuffle",tint=if(shuffle) dynamicPrimary else Color.White) }
+                IconButton(onClick={service.previous()}, interactionSource = prSrc, modifier = Modifier.iosLiquidPress(prSrc, scaleDown = 0.88f)) { Icon(Icons.Default.SkipPrevious,"Previous",modifier=Modifier.size(32.dp)) }
+                if (glassEnabled) {
+                    Box(
+                        modifier = Modifier
+                            .size(76.dp)
+                            .iosLiquidPress(plSrc, scaleDown = 0.90f, sheenAlpha = 0.22f)
+                            .liquidGlassSurface(
+                                backdrop = musicBackdrop,
+                                enabled = true,
+                                shape = CircleShape,
+                                tint = dynamicPrimary.copy(alpha = 0.30f),
+                                refractionHeight = 14.dp,
+                                refractionAmount = 26.dp,
+                            )
+                            .clickable(interactionSource = plSrc, indication = null) { service.toggle() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(if(state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",tint=Color.White,modifier=Modifier.size(44.dp))
+                    }
+                } else {
+                    OutlinedIconButton(
+                        onClick={service.toggle()},
+                        interactionSource = plSrc,
+                        modifier=Modifier.size(74.dp).iosLiquidPress(plSrc, scaleDown = 0.90f),
+                        border=BorderStroke(2.dp,Color.White),
+                    ) { Icon(if(state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",modifier=Modifier.size(44.dp)) }
+                }
+                IconButton(onClick={service.next()}, interactionSource = nxSrc, modifier = Modifier.iosLiquidPress(nxSrc, scaleDown = 0.88f)) { Icon(Icons.Default.SkipNext,"Next",modifier=Modifier.size(32.dp)) }
+                IconButton(onClick={service.setRepeat(when(repeat){"off"->"all";"all"->"one";else->"off"})}, interactionSource = rpSrc, modifier = Modifier.iosLiquidPress(rpSrc, scaleDown = 0.88f)) { Icon(if(repeat=="one") Icons.Default.RepeatOne else Icons.Default.Repeat,"Repeat $repeat",tint=if(repeat!="off") dynamicPrimary else Color.White) }
             }
             Row(Modifier.fillMaxWidth().padding(vertical=10.dp),horizontalArrangement=Arrangement.SpaceBetween) {
-                TextButton(onClick={panel="Lyrics"}) { Icon(Icons.Default.Lyrics,null);Text("Lyrics",color=Color.White) }
-                TextButton(onClick={panel="Queue"}) { Icon(Icons.Default.QueueMusic,null);Text("Playing Queue",color=Color.White) }
+                val lSrc = remember { MutableInteractionSource() }
+                val qSrc = remember { MutableInteractionSource() }
+                TextButton(
+                    onClick={panel="Lyrics"},
+                    interactionSource = lSrc,
+                    modifier = Modifier.iosLiquidPress(lSrc, scaleDown = 0.94f).let {
+                        if (glassEnabled) it.liquidGlassSurface(musicBackdrop, true, RoundedCornerShape(20.dp), tint = Color(0x460C141F)) else it
+                    },
+                ) { Icon(Icons.Default.Lyrics,null);Spacer(Modifier.width(6.dp));Text("Lyrics",color=Color.White) }
+                TextButton(
+                    onClick={panel="Queue"},
+                    interactionSource = qSrc,
+                    modifier = Modifier.iosLiquidPress(qSrc, scaleDown = 0.94f).let {
+                        if (glassEnabled) it.liquidGlassSurface(musicBackdrop, true, RoundedCornerShape(20.dp), tint = Color(0x460C141F)) else it
+                    },
+                ) { Icon(Icons.Default.QueueMusic,null);Spacer(Modifier.width(6.dp));Text("Playing Queue",color=Color.White) }
             }
         }
-        state.error?.let { Text(it,color=Color(0xFFFFB4AB),modifier=Modifier.align(Alignment.BottomCenter).background(Color.Black).padding(12.dp)) }
+        state.error?.let { Text(it,color=Color(0xFFFFB4AB),modifier=Modifier.align(Alignment.BottomCenter).safeDrawingPadding().background(Color.Black).padding(12.dp)) }
     }
     when(panel) {
         "Effects" -> PlayerSidePanel("Audio effects",{panel=null}) { AudioEffectsControls(service) }
@@ -216,7 +394,7 @@ fun MusicPlayerScreen(activity: MainActivity, service: PlaybackService, state: P
             val current=lyrics.indexOfLast { it.time!=null && it.time<=timeline.position }
             val scroll=androidx.compose.foundation.lazy.rememberLazyListState()
             LaunchedEffect(current) { if(current>=0) scroll.animateScrollToItem(current) }
-            LazyColumn(Modifier.fillMaxWidth().height(340.dp),state=scroll) { items(lyrics.size) { i -> Text(lyrics[i].text,color=if(i==current) Accent else Color.White,modifier=Modifier.padding(vertical=8.dp)) } }
+            LazyColumn(Modifier.fillMaxWidth().height(340.dp),state=scroll) { items(lyrics.size) { i -> Text(lyrics[i].text,color=if(i==current) dynamicPrimary else Color.White,modifier=Modifier.padding(vertical=8.dp)) } }
         }
         "Options" -> PlayerSidePanel("Music options",{panel=null}) {
             TextButton(onClick={panel="Effects"}) { Text("Equalizer and effects") }

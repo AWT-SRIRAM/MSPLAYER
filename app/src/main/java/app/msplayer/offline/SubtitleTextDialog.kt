@@ -61,6 +61,7 @@ fun SubtitleTextDialog(initial: SubtitleStyle, cancel: () -> Unit, apply: (Subti
                     Text("Layout",fontWeight=FontWeight.Medium)
                     SubtitleValue("Line spacing",draft.lineSpacing,80..200,"%") {draft=draft.copy(lineSpacing=it)}
                     SubtitleValue("Bottom clearance",draft.bottomMargin,0..40,"%") {draft=draft.copy(bottomMargin=it,legacyMargin=null)}
+                    SubtitleToggle("Dock extra subtitles at top",draft.secondaryTop) {draft=draft.copy(secondaryTop=it)}
                     SubtitleEncodingPicker(draft.encoding) {draft=draft.copy(encoding=it)}
                     
                 }

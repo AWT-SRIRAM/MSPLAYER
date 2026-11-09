@@ -182,7 +182,12 @@ object PlaybackRules {
                 val (h1, m1, s1, cs1, h2, m2, s2, cs2, text) = ssaMatch.destructured
                 val startMs = h1.toLong() * 3600000L + m1.toLong() * 60000L + s1.toLong() * 1000L + cs1.toLong() * 10L
                 val endMs = h2.toLong() * 3600000L + m2.toLong() * 60000L + s2.toLong() * 1000L + cs2.toLong() * 10L
-                val cleanText = text.replace(Regex("""\{[^}]*\}"""), "").replace("\\N", "\n").replace("\\n", "\n").trim()
+                var cleanText = text.replace(Regex("""\{[^}]*\\p[1-9][^}]*\}.*?(\{[^}]*\\p0[^}]*\}|$)""", RegexOption.DOT_MATCHES_ALL), "")
+                    .replace(Regex("""\{[^}]*\}"""), "")
+                    .replace("\\N", "\n").replace("\\n", "\n").trim()
+                if (cleanText.matches(Regex("""^(?:[mnlbspc]\s+-?\d+(?:\s+-?\d+)*\s*)+$""", RegexOption.IGNORE_CASE))) {
+                    cleanText = ""
+                }
                 if (cleanText.isNotEmpty()) {
                     cues += SubtitleCue(startMs, endMs, cleanText)
                 }
@@ -207,5 +212,51 @@ object PlaybackRules {
         return lower.startsWith("http://") || lower.startsWith("https://") ||
                 lower.startsWith("rtsp://") || lower.startsWith("rtmp://") ||
                 lower.startsWith("mms://") || lower.startsWith("udp://")
+    }
+
+    /**
+     * Extracts or normalizes a stream URL pasted from clipboard or shared from another app.
+     * Supports raw URLs, shared message text containing an HTTP/RTSP/RTMP URL, and bare domains.
+     */
+    fun normalizeStreamUrl(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return ""
+        val urlRegex = Regex("""(?i)\b(?:https?|rtsp|rtmp|mms|udp)://[^\s<>"']+""")
+        urlRegex.find(trimmed)?.value?.let { return it.trimEnd('.', ',', ';', ')', ']', '!') }
+        val lower = trimmed.lowercase(java.util.Locale.ROOT)
+        if (!trimmed.contains(' ') && (trimmed.contains('.') || lower.startsWith("localhost"))) {
+            if (isStreamUrl(trimmed)) return trimmed
+            return "https://$trimmed"
+        }
+        return trimmed
+    }
+
+    /**
+     * Returns true when a URL looks like a social/video webpage (HTML) rather than a direct
+     * media file or manifest stream (.mp4, .mkv, .m3u8, .mpd, etc.).
+     */
+    fun isWebpageWrapperUrl(url: String): Boolean {
+        val clean = normalizeStreamUrl(url).lowercase(java.util.Locale.ROOT)
+        if (!clean.startsWith("http://") && !clean.startsWith("https://")) return false
+        val path = clean.substringBefore('?').substringBefore('#')
+        val directExt = listOf(".mp4", ".mkv", ".webm", ".mov", ".avi", ".ts", ".m3u8", ".mpd", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus")
+        if (directExt.any { path.endsWith(it) }) return false
+        val host = clean.substringAfter("://").substringBefore('/').substringBefore(':').removePrefix("www.").removePrefix("m.")
+        return host in setOf(
+            "youtube.com", "youtu.be", "music.youtube.com",
+            "instagram.com", "tiktok.com", "facebook.com", "fb.watch",
+            "vimeo.com", "dailymotion.com", "x.com", "twitter.com"
+        )
+    }
+
+    enum class AspectOption(val label: String) {
+        BEST_FIT("Best fit"),
+        CROP("Crop"),
+        STRETCH("Stretch"),
+        RATIO_16_9("16:9"),
+        RATIO_4_3("4:3"),
+        ORIGINAL("Original");
+
+        fun next(): AspectOption = entries[(ordinal + 1) % entries.size]
     }
 }
