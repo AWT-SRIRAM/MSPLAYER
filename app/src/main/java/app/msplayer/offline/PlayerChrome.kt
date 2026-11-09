@@ -459,24 +459,26 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
         modifier = modifier
             .fillMaxSize()
             .safeDrawingPadding()
-            .padding(top = 20.dp, start = 16.dp, end = 16.dp),
+            .padding(top = 18.dp, start = 16.dp, end = 16.dp),
         contentAlignment = Alignment.TopCenter,
     ) {
         val availableWidth = maxWidth
         val expandedWidthDp = if (availableWidth > 500.dp) {
-            (availableWidth * 0.58f).coerceIn(400.dp, 500.dp)
+            (availableWidth * 0.34f).coerceIn(286.dp, 326.dp)
         } else {
-            availableWidth.coerceAtMost(420.dp)
+            (availableWidth * 0.84f).coerceIn(268.dp, 310.dp)
         }
         val expandedWidthPx = with(density) { expandedWidthDp.roundToPx() }
-        val expandedHPadPx = with(density) { 18.dp.roundToPx() }
-        val expandedTopPadPx = with(density) { 10.dp.roundToPx() }
-        val expandedBottomPadPx = with(density) { 8.dp.roundToPx() }
-        val rulerStatusGapPx = with(density) { 4.dp.roundToPx() }
+        val expandedHPadPx = with(density) { 13.dp.roundToPx() }
+        val expandedTopPadPx = with(density) { 6.dp.roundToPx() }
+        val expandedBottomPadPx = with(density) { 5.dp.roundToPx() }
+        val rulerStatusGapPx = with(density) { 2.dp.roundToPx() }
         val compactHPadPx = with(density) { 18.dp.roundToPx() }
         val compactVPadPx = with(density) { 9.dp.roundToPx() }
 
-        val capsuleCornerDp = (22f + (30f - 22f) * morph).dp
+        val expandedStatusScaleTarget = 0.84f
+        val statusScale = 1f - (1f - expandedStatusScaleTarget) * morph
+        val capsuleCornerDp = (22f + (18f - 22f) * morph).dp
         val tintColor = androidx.compose.ui.graphics.lerp(
             Color(0x88101622),
             Color(0x740B121C),
@@ -484,7 +486,7 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
         )
         val rulerAlpha = ((morph - 0.52f) / 0.48f).coerceIn(0f, 1f)
         val rulerScale = 0.88f + 0.12f * rulerAlpha
-        val rulerShiftPx = (morph - 1f) * with(density) { 8.dp.toPx() }
+        val rulerShiftPx = (morph - 1f) * with(density) { 6.dp.toPx() }
 
         Layout(
             modifier = Modifier.frostedGlassChrome(
@@ -494,9 +496,9 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                 fallbackColor = Color.Black.copy(alpha = 0.70f),
             ),
             content = {
-                val endGapPx = with(density) { 10.dp.roundToPx() }
-                val labelToTrackGapPx = with(density) { 4.dp.roundToPx() }
-                val trackHeightPx = with(density) { 20.dp.roundToPx() }
+                val endGapPx = with(density) { 6.dp.roundToPx() }
+                val labelToTrackGapPx = with(density) { 1.dp.roundToPx() }
+                val trackHeightPx = with(density) { 14.dp.roundToPx() }
                 Layout(
                     content = {
                         innerStops.forEach { stop ->
@@ -504,7 +506,7 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                             Text(
                                 text = "${String.format(java.util.Locale.ROOT, "%.1f", stop)}x",
                                 color = if (isActive) Accent else Color.White,
-                                fontSize = if (isActive) 12.sp else 11.sp,
+                                fontSize = if (isActive) 10.5f.sp else 9.5f.sp,
                                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                                 maxLines = 1,
                                 softWrap = false,
@@ -514,7 +516,7 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                         Text(
                             text = "0.25x",
                             color = if (leftActive) Accent else Color.White,
-                            fontSize = if (leftActive) 11.5f.sp else 11.sp,
+                            fontSize = if (leftActive) 10.5f.sp else 10.sp,
                             fontWeight = if (leftActive) FontWeight.Bold else FontWeight.Normal,
                             maxLines = 1,
                             softWrap = false,
@@ -523,7 +525,7 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                         Text(
                             text = "4.0x",
                             color = if (rightActive) Accent else Color.White,
-                            fontSize = if (rightActive) 11.5f.sp else 11.sp,
+                            fontSize = if (rightActive) 10.5f.sp else 10.sp,
                             fontWeight = if (rightActive) FontWeight.Bold else FontWeight.Normal,
                             maxLines = 1,
                             softWrap = false,
@@ -534,26 +536,26 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                                 color = Color.White.copy(alpha = 0.36f),
                                 start = androidx.compose.ui.geometry.Offset(0f, y),
                                 end = androidx.compose.ui.geometry.Offset(size.width, y),
-                                strokeWidth = 2.5.dp.toPx(),
+                                strokeWidth = 2.dp.toPx(),
                                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
                             )
                             GestureRules.rulerStops.forEach { stop ->
                                 val cx = size.width * GestureRules.fraction(stop)
                                 drawCircle(
                                     color = Color.White.copy(alpha = 0.90f),
-                                    radius = 2.dp.toPx(),
+                                    radius = 1.6f.dp.toPx(),
                                     center = androidx.compose.ui.geometry.Offset(cx, y),
                                 )
                             }
                             val thumbX = size.width * animatedFraction.coerceIn(0f, 1f)
                             drawCircle(
                                 color = Accent.copy(alpha = 0.32f),
-                                radius = 9.dp.toPx(),
+                                radius = 7.dp.toPx(),
                                 center = androidx.compose.ui.geometry.Offset(thumbX, y),
                             )
                             drawCircle(
                                 color = Accent,
-                                radius = 5.5.dp.toPx(),
+                                radius = 4.5f.dp.toPx(),
                                 center = androidx.compose.ui.geometry.Offset(thumbX, y),
                             )
                         }
@@ -601,6 +603,10 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                 }
 
                 Row(
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = statusScale
+                        scaleY = statusScale
+                    },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
@@ -621,7 +627,7 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                 }
             },
         ) { measurables, constraints ->
-            val maxRulerWidth = (expandedWidthPx - expandedHPadPx * 2).coerceAtLeast(180)
+            val maxRulerWidth = (expandedWidthPx - expandedHPadPx * 2).coerceAtLeast(160)
             val rulerPlaceable = measurables[0].measure(
                 Constraints(
                     minWidth = maxRulerWidth,
@@ -634,8 +640,10 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                 constraints.copy(minWidth = 0, minHeight = 0)
             )
 
-            val expandedW = maxOf(expandedWidthPx, statusPlaceable.width + expandedHPadPx * 2)
-            val expandedH = expandedTopPadPx + rulerPlaceable.height + rulerStatusGapPx + statusPlaceable.height + expandedBottomPadPx
+            val expandedStatusWidth = (statusPlaceable.width * expandedStatusScaleTarget).roundToInt()
+            val expandedStatusHeight = (statusPlaceable.height * expandedStatusScaleTarget).roundToInt()
+            val expandedW = maxOf(expandedWidthPx, expandedStatusWidth + expandedHPadPx * 2)
+            val expandedH = expandedTopPadPx + rulerPlaceable.height + rulerStatusGapPx + expandedStatusHeight + expandedBottomPadPx
             val compactW = statusPlaceable.width + compactHPadPx * 2
             val compactH = statusPlaceable.height + compactVPadPx * 2
 
@@ -649,8 +657,8 @@ fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifi
                         y = expandedTopPadPx,
                     )
                 }
-                val compactStatusY = (currentH - statusPlaceable.height) / 2f
-                val expandedStatusY = (expandedH - expandedBottomPadPx - statusPlaceable.height).toFloat()
+                val compactStatusY = (compactH - statusPlaceable.height) / 2f
+                val expandedStatusY = expandedH - expandedBottomPadPx - (expandedStatusHeight + statusPlaceable.height) / 2f
                 val statusY = (compactStatusY + (expandedStatusY - compactStatusY) * morph).roundToInt()
                 statusPlaceable.placeRelative(
                     x = (currentW - statusPlaceable.width) / 2,

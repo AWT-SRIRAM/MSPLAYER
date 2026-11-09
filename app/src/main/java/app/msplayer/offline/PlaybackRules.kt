@@ -259,4 +259,43 @@ object PlaybackRules {
 
         fun next(): AspectOption = entries[(ordinal + 1) % entries.size]
     }
+
+    /**
+     * Picks the primary subtitle track from available (id, label) pairs.
+     * Prefers an exact [preferredName] match when present; otherwise selects the best
+     * full-dialogue track (prioritizing English full dialogue over forced/signs-only tracks
+     * while preserving original track order on ties).
+     */
+    fun choosePrimarySubtitle(
+        tracks: List<Pair<Int, String>>,
+        preferredName: String? = null,
+    ): Pair<Int, String>? {
+        val valid = tracks.filter { it.first >= 0 }
+        if (valid.isEmpty()) return null
+
+        val pref = preferredName?.trim()?.takeIf { it.isNotEmpty() }
+        if (pref != null) {
+            valid.firstOrNull { it.second.equals(pref, ignoreCase = true) }?.let { return it }
+        }
+
+        return valid.withIndex()
+            .maxWithOrNull(
+                compareBy<IndexedValue<Pair<Int, String>>> { (_, entry) ->
+                    val lower = entry.second.lowercase(java.util.Locale.ROOT)
+                    val isForcedOrSigns =
+                        lower.contains("forced") ||
+                            lower.contains("signs") ||
+                            lower.contains("songs") ||
+                            lower.contains("karaoke")
+                    val isEnglish =
+                        lower.contains("english") ||
+                            Regex("""(?:^|[^a-z])(en|eng)(?:[^a-z]|$)""").containsMatchIn(lower)
+                    var score = 0
+                    if (isForcedOrSigns) score -= 100
+                    if (isEnglish) score += 20
+                    score
+                }.thenByDescending { it.index }
+            )
+            ?.value
+    }
 }

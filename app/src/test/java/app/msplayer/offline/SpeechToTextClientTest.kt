@@ -122,5 +122,43 @@ class SpeechToTextClientTest {
         assertFalse(SpeechToTextClient.isEnglishLanguageTag("und"))
         assertTrue(SpeechToTextClient.MAX_GROQ_CHUNK_BYTES <= 12L * 1024L * 1024L)
     }
+
+    @Test
+    fun testDirectMuxSplitEligibilityAndPipelinedChunkDuration() {
+        // Compact AAC/Opus under threshold qualifies for zero-reencode direct split
+        assertTrue(SpeechToTextClient.shouldDirectMuxSplit("audio/mp4a-latm", true, 128_000L, 40L * 1024L * 1024L))
+        assertTrue(SpeechToTextClient.shouldDirectMuxSplit("audio/opus", true, 96_000L, 80L * 1024L * 1024L))
+        // Unsupported direct mux or heavy codecs must fall back to fast speech transcode
+        assertFalse(SpeechToTextClient.shouldDirectMuxSplit("audio/mp4a-latm", false, 128_000L, 10L * 1024L * 1024L))
+        assertFalse(SpeechToTextClient.shouldDirectMuxSplit("audio/ac3", true, 192_000L, 10L * 1024L * 1024L))
+        assertFalse(SpeechToTextClient.shouldDirectMuxSplit("audio/flac", true, 192_000L, 10L * 1024L * 1024L))
+        // High-bitrate compact codecs must transcode so speech stays tiny and uploads fast
+        assertFalse(SpeechToTextClient.shouldDirectMuxSplit("audio/mp4a-latm", true, 320_000L, 50L * 1024L * 1024L))
+        // Unknown bitrate only uses direct split on small sources
+        assertTrue(SpeechToTextClient.shouldDirectMuxSplit("audio/mp4a-latm", true, -1L, 8L * 1024L * 1024L))
+        assertFalse(SpeechToTextClient.shouldDirectMuxSplit("audio/mp4a-latm", true, -1L, 25L * 1024L * 1024L))
+
+        // Chunk 0 uses shorter 4-min slice on longer media for earlier live subtitle preview
+        val longDurationUs = 25L * 60L * 1_000_000L
+        assertEquals(SpeechToTextClient.FIRST_CHUNK_DURATION_US, SpeechToTextClient.chunkLimitDurationUs(0, longDurationUs))
+        assertEquals(SpeechToTextClient.MAX_CHUNK_DURATION_US, SpeechToTextClient.chunkLimitDurationUs(1, longDurationUs))
+        assertEquals(SpeechToTextClient.MAX_CHUNK_DURATION_US, SpeechToTextClient.chunkLimitDurationUs(0, 5L * 60L * 1_000_000L))
+    }
+
+    @Test
+    fun testSanitizeErrorMessageHidesServiceBrandAndClarifiesNetwork() {
+        assertEquals(
+            "Unable to reach AI Subtitles service — check your internet connection",
+            SpeechToTextClient.sanitizeErrorMessage("""Unable to resolve host "api.deepgram.com": No address associated with hostname"""),
+        )
+        assertEquals(
+            "Unable to reach AI Subtitles service — check your internet connection",
+            SpeechToTextClient.sanitizeErrorMessage("""Unable to resolve host "api.groq.com": No address associated with hostname"""),
+        )
+        val cleaned = SpeechToTextClient.sanitizeErrorMessage("Groq Cloud HTTP 429: rate limit")
+        assertFalse(cleaned.contains("groq", ignoreCase = true))
+        assertFalse(cleaned.contains("deepgram", ignoreCase = true))
+        assertTrue(cleaned.contains("AI Subtitles"))
+    }
 }
 

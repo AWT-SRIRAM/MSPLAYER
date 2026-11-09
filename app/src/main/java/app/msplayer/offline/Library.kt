@@ -87,6 +87,23 @@ object Store {
         val updated = recentStreams(context).filter { it != url.trim() }
         prefs(context).edit().putString("recent_streams_v1", updated.joinToString("\n")).apply()
     }
+
+    fun dismissedRecentAdded(context: Context): Set<String> =
+        prefs(context).getStringSet("dismissed_recent_added_v1", emptySet()).orEmpty().toSet()
+
+    fun dismissRecentAdded(context: Context, uri: String) {
+        val updated = dismissedRecentAdded(context) + uri
+        prefs(context).edit().putStringSet("dismissed_recent_added_v1", updated).apply()
+    }
+
+    fun dismissAllRecentAdded(context: Context, uris: Iterable<String>) {
+        val updated = dismissedRecentAdded(context) + uris
+        prefs(context).edit().putStringSet("dismissed_recent_added_v1", updated).apply()
+    }
+
+    fun clearDismissedRecentAdded(context: Context) {
+        prefs(context).edit().remove("dismissed_recent_added_v1").apply()
+    }
 }
 
 object Library {

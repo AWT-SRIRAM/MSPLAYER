@@ -494,7 +494,12 @@ class PlaybackService : Service() {
                     endTemporarySpeed()
                     if (shuffleEnabled.value && queue.size > 1 && repeatMode.value != "one") { next(); return@setEventListener }
                     when (Store.prefs(this).getString("repeat", "off")) {
-                        "one" -> openCurrent(0)
+                        "one" -> {
+                            val prior = state.value.copy(playing = true)
+                            pendingStyleRestore = prior
+                            pendingStyleTracks = prior
+                            openCurrent(0, restore = false, keepSubtitleChoice = true)
+                        }
                         "all" -> {
                             index = (index + 1) % queue.size.coerceAtLeast(1)
                             openCurrent(0)
@@ -573,7 +578,7 @@ class PlaybackService : Service() {
         openCurrent(null)
     }
 
-    private fun openCurrent(position: Long?, restore: Boolean = true) {
+    private fun openCurrent(position: Long?, restore: Boolean = true, keepSubtitleChoice: Boolean = false) {
         endTemporarySpeed()
         repeatA = null; repeatB = null; abPoints.value = null to null
         val item = queue.getOrNull(index) ?: return
@@ -584,8 +589,8 @@ class PlaybackService : Service() {
         finished = false
         activeSubtitleText.value = null
         selectedSubTracks.clear()
-        userModifiedSubtitles = false
-        initialSubRestored = false
+        userModifiedSubtitles = keepSubtitleChoice
+        initialSubRestored = keepSubtitleChoice && pendingStyleTracks?.selectedSubtitleTracks.isNullOrEmpty()
         autoSubCues = emptyList()
         parsedCues = emptyList()
         activeCues = emptyList()
@@ -617,18 +622,9 @@ class PlaybackService : Service() {
                             embeddedCuesByTrack = demux.cuesByTrack
                             refreshTracks(restore = false)
                             if (selectedSubTracks.isNotEmpty()) {
-                                syncSubtitleTracks()
-                            } else if (!userModifiedSubtitles && !initialSubRestored) {
-                                val preferredSub = Store.prefs(this@PlaybackService).getString("subtitle_name", null)
-                                val target = if (preferredSub != null) {
-                                    state.value.subtitles.firstOrNull { it.second == preferredSub && it.first >= 0 }
-                                } else {
-                                    state.value.subtitles.firstOrNull { it.first >= 0 }
-                                }
-                                if (target != null) {
-                                    initialSubRestored = true
-                                    subtitleTrack(target.first, target.second)
-                                }
+                                syncSubtitleTracks(persistName = false)
+                            } else {
+                                maybeAutoSelectPrimarySubtitle()
                             }
                         }
                     }
@@ -654,12 +650,16 @@ class PlaybackService : Service() {
                         withContext(Dispatchers.Main) {
                             if (state.value.item?.uri == item.uri) {
                                 autoSubCues = parsedAi.sortedBy { it.startMs }
-                                // Auto-select saved AI subtitles on initial open, preserving user uncheck on decoder/style reload
+                                // Auto-select saved AI / exact-stem subtitles on initial open, preserving user uncheck on decoder/style reload
                                 if (!userModifiedSubtitles && pendingStyleTracks == null) {
+                                    selectedSubTracks.clear()
                                     selectedSubTracks.add(9999)
+                                    initialSubRestored = true
                                 }
                                 refreshTracks(false)
-                                syncSubtitleTracks("AI Subtitles", persistName = false)
+                                if (9999 in selectedSubTracks) {
+                                    syncSubtitleTracks("AI Subtitles", persistName = false)
+                                }
                             }
                         }
                     }
@@ -957,8 +957,17 @@ class PlaybackService : Service() {
         state.value = state.value.copy(decoder = mode)
         pendingStyleRestore = prior
         pendingStyleTracks = prior
-        openCurrent(state.value.position, false)
-        userModifiedSubtitles = prior.selectedSubtitleTracks.isNotEmpty()
+        openCurrent(state.value.position, restore = false, keepSubtitleChoice = true)
+    }
+
+    private fun maybeAutoSelectPrimarySubtitle() {
+        if (userModifiedSubtitles || initialSubRestored || selectedSubTracks.isNotEmpty() || pendingStyleTracks != null) return
+        val preferredSub = Store.prefs(this).getString("subtitle_name", null)
+        val target = PlaybackRules.choosePrimarySubtitle(state.value.subtitles, preferredSub) ?: return
+        initialSubRestored = true
+        selectedSubTracks.clear()
+        selectedSubTracks.add(target.first)
+        syncSubtitleTracks(target.second, persistName = false)
     }
 
     fun refreshTracks(restore: Boolean = true) {
@@ -1043,22 +1052,11 @@ class PlaybackService : Service() {
 
         val prefs = Store.prefs(this)
         val preferredAudio = prefs.getString("audio_name", null)
-        val preferredSub = prefs.getString("subtitle_name", null)
         if (restore) {
             preferredAudio?.let { n ->
                 state.value.audioTracks
                     .firstOrNull { it.second == n }
                     ?.let { player.setAudioTrack(it.first) }
-            }
-            if (!initialSubRestored && !userModifiedSubtitles && selectedSubTracks.isEmpty()) {
-                preferredSub?.let { n ->
-                    state.value.subtitles
-                        .firstOrNull { it.second == n && it.first >= 0 }
-                        ?.let {
-                            initialSubRestored = true
-                            subtitleTrack(it.first, n)
-                        }
-                }
             }
             state.value =
                 state.value.copy(audioTrack = player.audioTrack, subtitleTrack = selectedSubTracks.firstOrNull() ?: player.spuTrack)
@@ -1111,6 +1109,7 @@ class PlaybackService : Service() {
         if (autoSelectedExternal && pendingStyleTracks == null) {
             syncSubtitleTracks(persistName = false)
         }
+        maybeAutoSelectPrimarySubtitle()
         updateSubtitleKind()
     }
 
@@ -1295,12 +1294,18 @@ class PlaybackService : Service() {
         updateSubtitleTextAt(nativePosition())
     }
 
-    fun loadAutoSubCues(cues: List<PlaybackRules.SubtitleCue>) {
+    fun loadAutoSubCues(cues: List<PlaybackRules.SubtitleCue>, userTriggered: Boolean = true) {
         autoSubCues = cues.sortedBy { it.startMs }
-        userModifiedSubtitles = true
-        selectedSubTracks.add(9999)
+        if (userTriggered) {
+            userModifiedSubtitles = true
+            selectedSubTracks.add(9999)
+        } else if (!userModifiedSubtitles || 9999 in selectedSubTracks) {
+            selectedSubTracks.add(9999)
+        }
         refreshTracks(false)
-        syncSubtitleTracks("AI Subtitles", persistName = false)
+        if (9999 in selectedSubTracks) {
+            syncSubtitleTracks("AI Subtitles", persistName = false)
+        }
     }
 
     private fun resolveLocalFile(uri: Uri): java.io.File? {
@@ -1372,57 +1377,61 @@ class PlaybackService : Service() {
         val selectedOrdinal = validAudioTracks.indexOfFirst { it.first == state.value.audioTrack }
         val preferredOrdinal = if (englishOrdinal >= 0) englishOrdinal else selectedOrdinal
 
+        val targetUri = item.uri
+        val targetTitle = item.title
         autoSubStatus.value = AutoSubStatus.Processing("Preparing audio...", 5)
         scope.launch(Dispatchers.IO) {
-            var chunks = emptyList<SpeechToTextClient.ExtractedChunk>()
+            val shownPartial = java.util.concurrent.atomic.AtomicBoolean(false)
             try {
-                val uri = Uri.parse(item.uri)
-                chunks = SpeechToTextClient.extractAudioChunks(
+                val uri = Uri.parse(targetUri)
+                val result = SpeechToTextClient.extractAndTranscribeCascade(
                     context = context,
                     uri = uri,
                     cacheDir = context.cacheDir,
                     preferredAudioOrdinal = preferredOrdinal,
                     preferEnglishFirst = true,
-                ) { p ->
-                    autoSubStatus.value = AutoSubStatus.Processing("Compressing speech audio...", p.coerceIn(5, 40))
-                }
-                if (chunks.isEmpty()) {
-                    val fallbackFile = resolveLocalFile(uri)?.takeIf { it.length() <= SpeechToTextClient.MAX_GROQ_CHUNK_BYTES }
-                    if (fallbackFile != null) {
-                        chunks = listOf(SpeechToTextClient.ExtractedChunk(fallbackFile, 0L, "audio/m4a"))
-                    }
-                }
-                if (chunks.isEmpty()) {
-                    autoSubStatus.value = AutoSubStatus.Error("Could not extract audio track (file empty or unreadable)")
-                    return@launch
-                }
-
-                val partLabel = if (chunks.size > 1) "${chunks.size} parts" else "1 part"
-                autoSubStatus.value = AutoSubStatus.Processing("Generating AI Subtitles ($partLabel)...", 45)
-                val result = SpeechToTextClient.transcribeChunksCascade(
-                    chunks = chunks,
                     groqKey = groqKey,
-                    deepgramKey = deepgramKey
-                ) { p ->
-                    autoSubStatus.value = AutoSubStatus.Processing("Generating AI Subtitles ($partLabel)...", p.coerceIn(45, 88))
-                }
+                    deepgramKey = deepgramKey,
+                    fallbackChunkProvider = {
+                        val fallbackFile = resolveLocalFile(uri)?.takeIf { it.length() <= SpeechToTextClient.MAX_GROQ_CHUNK_BYTES }
+                        fallbackFile?.let { SpeechToTextClient.ExtractedChunk(it, 0L, "audio/m4a") }
+                    },
+                    isCancelled = { released || state.value.item?.uri != targetUri },
+                    onStageProgress = { label, pct ->
+                        if (!released && state.value.item?.uri == targetUri) {
+                            autoSubStatus.value = AutoSubStatus.Processing(label, pct)
+                        }
+                    },
+                    onPartialCues = { partialCues ->
+                        if (partialCues.isNotEmpty() && !released && state.value.item?.uri == targetUri) {
+                            val firstLive = shownPartial.compareAndSet(false, true)
+                            scope.launch(Dispatchers.Main) {
+                                if (!released && state.value.item?.uri == targetUri) {
+                                    loadAutoSubCues(partialCues, userTriggered = firstLive)
+                                }
+                            }
+                        }
+                    }
+                )
 
-                autoSubStatus.value = AutoSubStatus.Processing("Syncing subtitle timestamps...", 92)
+                if (released || state.value.item?.uri != targetUri) return@launch
+                autoSubStatus.value = AutoSubStatus.Processing("Syncing subtitle timestamps...", 94)
                 val cues = SpeechToTextClient.buildSubtitleCues(result.words)
                 val videoFile = resolveLocalFile(uri)
-                val savedFile = SpeechToTextClient.saveSrtFile(context, item.title, cues, videoFile)
+                val savedFile = SpeechToTextClient.saveSrtFile(context, targetTitle, cues, videoFile)
                 if (savedFile != null && savedFile.exists()) {
-                    Store.prefs(this@PlaybackService).edit().putString("custom_sub_${item.uri}", savedFile.absolutePath).apply()
+                    Store.prefs(this@PlaybackService).edit().putString("custom_sub_$targetUri", savedFile.absolutePath).apply()
                 }
 
                 withContext(Dispatchers.Main) {
+                    if (released || state.value.item?.uri != targetUri) return@withContext
                     autoSubStatus.value = AutoSubStatus.Success(
                         file = savedFile,
                         count = cues.size,
                         provider = result.provider,
                         note = null
                     )
-                    loadAutoSubCues(cues)
+                    loadAutoSubCues(cues, userTriggered = !shownPartial.get() || 9999 in selectedSubTracks)
                     android.widget.Toast.makeText(
                         context,
                         "AI Subtitles ready (${cues.size} lines)",
@@ -1430,15 +1439,14 @@ class PlaybackService : Service() {
                     ).show()
                 }
             } catch (e: Exception) {
-                autoSubStatus.value = AutoSubStatus.Error(e.message ?: "Transcription failed")
-                withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(context, "AI Subtitles error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                if (released || state.value.item?.uri != targetUri) {
+                    autoSubStatus.value = AutoSubStatus.Idle
+                    return@launch
                 }
-            } finally {
-                chunks.forEach { chunk ->
-                    if (chunk.file.name.startsWith("temp_autosub_")) {
-                        runCatching { chunk.file.delete() }
-                    }
+                val cleanErr = SpeechToTextClient.sanitizeErrorMessage(e.message)
+                autoSubStatus.value = AutoSubStatus.Error(cleanErr)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "AI Subtitles error: $cleanErr", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -1525,8 +1533,7 @@ class PlaybackService : Service() {
         applyVolume()
         bindPlayerEvents()
         videoLayout?.let { player.attachViews(it, null, true, false) }
-        openCurrent(prior.position, false)
-        userModifiedSubtitles = prior.selectedSubtitleTracks.isNotEmpty()
+        openCurrent(prior.position, restore = false, keepSubtitleChoice = true)
     }
 
     fun updateSubtitlePosition(bottomPercent: Int) {

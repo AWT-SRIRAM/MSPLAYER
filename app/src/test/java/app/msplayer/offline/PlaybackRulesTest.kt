@@ -82,4 +82,37 @@ class PlaybackRulesTest {
         assertFalse(PlaybackRules.isStreamUrl("content://media/external/video/media/123"))
         assertFalse(PlaybackRules.isStreamUrl("/storage/emulated/0/DCIM/video.mp4"))
     }
+
+    @Test
+    fun choosePrimarySubtitleSelectsFullDialogueEvenWithUnrelatedSavedPreference() {
+        assertNull(PlaybackRules.choosePrimarySubtitle(emptyList(), null))
+        assertNull(PlaybackRules.choosePrimarySubtitle(listOf(-1 to "Disable"), "English"))
+
+        val tracks = listOf(
+            -1 to "Disable",
+            3 to "Signs & Songs [eng]",
+            4 to "Track 2 [eng]",
+            5 to "Japanese [jpn]",
+        )
+        // Stale/unrelated saved name must NOT block selecting the primary track
+        assertEquals(4 to "Track 2 [eng]", PlaybackRules.choosePrimarySubtitle(tracks, "OldVideo.srt"))
+        // Existing saved match is honored case-insensitively
+        assertEquals(5 to "Japanese [jpn]", PlaybackRules.choosePrimarySubtitle(tracks, "japanese [JPN]"))
+        // English full dialogue preferred over earlier non-English full dialogue
+        assertEquals(
+            4 to "Track 2 [eng]",
+            PlaybackRules.choosePrimarySubtitle(
+                listOf(-1 to "Disable", 3 to "Japanese [jpn]", 4 to "Track 2 [eng]"),
+                null,
+            ),
+        )
+        // Ties preserve first track index
+        assertEquals(
+            3 to "Track 1",
+            PlaybackRules.choosePrimarySubtitle(
+                listOf(-1 to "Disable", 3 to "Track 1", 4 to "Track 2"),
+                null,
+            ),
+        )
+    }
 }

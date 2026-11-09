@@ -74,6 +74,7 @@ val Accent = Color(0xFF00A8FF)
 val Cyan = Color(0xFF66D8F3)
 val Muted = Color(0xFF8D96A7)
 val Panel = Color(0xFF15191F)
+private const val OPENSUBTITLES_ENABLED = false
 
 class MainActivity : ComponentActivity() {
     var playerControlsVisible by mutableStateOf(true)
@@ -702,7 +703,13 @@ private fun LibraryHome(
     var history by remember { mutableStateOf<List<SavedMedia>>(emptyList()) }
     var playlists by remember { mutableStateOf<List<String>>(emptyList()) }
     var playlistContent by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var dismissedRecent by remember { mutableStateOf(Store.dismissedRecentAdded(activity)) }
+    val recentRowState = rememberLazyListState()
+    LaunchedEffect(dismissedRecent) {
+        if (dismissedRecent.isEmpty()) recentRowState.scrollToItem(0)
+    }
     LaunchedEffect(tab, refresh, activePlaylist) {
+        dismissedRecent = Store.dismissedRecentAdded(activity)
         withContext(Dispatchers.IO) {
             val dao = Store.db(activity).dao()
             val h = dao.history()
@@ -999,8 +1006,11 @@ private fun LibraryHome(
                                     }
                                 if (folders.isEmpty()) AccessEmpty(activity)
                                 else {
-                                    val recentVideos = remember(activity.videos) {
-                                        activity.videos.filter { !it.audio }.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }.take(8)
+                                    val recentVideos = remember(activity.videos, hidden, dismissedRecent) {
+                                        activity.videos
+                                            .filter { !it.audio && it.folder !in hidden && it.uri !in dismissedRecent }
+                                            .sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
+                                            .take(8)
                                     }
                                     LazyColumn(contentPadding = PaddingValues(bottom = listBottomPad)) {
                                         item(key = "quick_actions") {
@@ -1027,14 +1037,45 @@ private fun LibraryHome(
                                         if (recentVideos.isNotEmpty()) {
                                             item(key = "recently_added") {
                                                 Column(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp)) {
-                                                    Text("Recently Added", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp))
+                                                    Row(
+                                                        Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(start = 18.dp, end = 14.dp, top = 4.dp, bottom = 4.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                    ) {
+                                                        Text(
+                                                            "Recently Added",
+                                                            fontSize = 16.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color.White,
+                                                        )
+                                                        Text(
+                                                            "Clear",
+                                                            fontSize = 12.5.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = Accent,
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(8.dp))
+                                                                .clickable {
+                                                                    val allVisibleUris = activity.videos
+                                                                        .filter { !it.audio && it.folder !in hidden }
+                                                                        .map { it.uri }
+                                                                    Store.dismissAllRecentAdded(activity, allVisibleUris)
+                                                                    dismissedRecent = Store.dismissedRecentAdded(activity)
+                                                                }
+                                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                        )
+                                                    }
                                                     LazyRow(
+                                                        state = recentRowState,
                                                         contentPadding = PaddingValues(horizontal = 16.dp),
                                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                                                         modifier = Modifier.padding(top = 4.dp)
                                                     ) {
                                                         items(recentVideos, key = { "recent_${it.uri}" }) { video ->
                                                             val recSrc = remember { MutableInteractionSource() }
+                                                            val rmSrc = remember(video.uri) { MutableInteractionSource() }
                                                             Column(
                                                                 Modifier
                                                                     .animateItem()
@@ -1054,6 +1095,28 @@ private fun LibraryHome(
                                                                         ) {
                                                                             Text("NEW", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                                         }
+                                                                    }
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .align(Alignment.TopEnd)
+                                                                            .padding(3.dp)
+                                                                            .size(22.dp)
+                                                                            .clip(CircleShape)
+                                                                            .background(Color.Black.copy(alpha = 0.72f))
+                                                                            .border(0.75.dp, Color.White.copy(alpha = 0.36f), CircleShape)
+                                                                            .iosLiquidPress(rmSrc, scaleDown = 0.85f, sheenAlpha = 0.16f)
+                                                                            .clickable(interactionSource = rmSrc, indication = null) {
+                                                                                Store.dismissRecentAdded(activity, video.uri)
+                                                                                dismissedRecent = Store.dismissedRecentAdded(activity)
+                                                                            },
+                                                                        contentAlignment = Alignment.Center,
+                                                                    ) {
+                                                                        Icon(
+                                                                            Icons.Default.Close,
+                                                                            contentDescription = "Remove ${video.title} from recently added",
+                                                                            tint = Color.White,
+                                                                            modifier = Modifier.size(13.dp),
+                                                                        )
                                                                     }
                                                                 }
                                                                 Text(
@@ -2251,6 +2314,15 @@ fun SettingsScreen(activity: MainActivity) {
                 ) {
                     Text("Restore excluded folders")
                 }
+                TextButton(
+                    onClick = {
+                        Store.clearDismissedRecentAdded(activity)
+                        activity.toast("Recently Added items restored")
+                        epoch++
+                    }
+                ) {
+                    Text("Restore recently added")
+                }
             }
             item {
                 HorizontalDivider(Modifier.padding(vertical = 20.dp))
@@ -2708,13 +2780,15 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Badge("${state.selectedSubtitleTracks.size} active", color = Color(0xFF1976D2))
                         }
                     }
-                    TextButton(
-                        colors = ButtonDefaults.textButtonColors(contentColor = Cyan),
-                        onClick = { openPlayerMenu("OpenSubtitles") }
-                    ) {
-                        Icon(Icons.Default.CloudDownload, null)
-                        Spacer(Modifier.width(12.dp))
-                        Text("Import from OpenSubtitles.org")
+                    if (OPENSUBTITLES_ENABLED) {
+                        TextButton(
+                            colors = ButtonDefaults.textButtonColors(contentColor = Cyan),
+                            onClick = { openPlayerMenu("OpenSubtitles") }
+                        ) {
+                            Icon(Icons.Default.CloudDownload, null)
+                            Spacer(Modifier.width(12.dp))
+                            Text("Import from OpenSubtitles.org")
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     val validSubs = state.subtitles.filter { it.first >= 0 }
@@ -2801,7 +2875,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
             activity = activity,
             onDismiss = { closePlayerMenu() }
         )
-    } else if (menu == "OpenSubtitles" && !activity.inPip) {
+    } else if (OPENSUBTITLES_ENABLED && menu == "OpenSubtitles" && !activity.inPip) {
         OpenSubtitlesDialog(
             service = service,
             activity = activity,
@@ -3797,19 +3871,21 @@ fun ApiKeysDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
-                    value = openSubInput,
-                    onValueChange = { openSubInput = it },
-                    label = { Text("OpenSubtitles API Key (optional)") },
-                    placeholder = {
-                        Text(
-                            if (hasBundledOpenSub) "Built-in key active (override optional)"
-                            else "Free key from opensubtitles.com/consumers"
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (OPENSUBTITLES_ENABLED) {
+                    OutlinedTextField(
+                        value = openSubInput,
+                        onValueChange = { openSubInput = it },
+                        label = { Text("OpenSubtitles API Key (optional)") },
+                        placeholder = {
+                            Text(
+                                if (hasBundledOpenSub) "Built-in key active (override optional)"
+                                else "Free key from opensubtitles.com/consumers"
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
             Row(
                 Modifier.fillMaxWidth(),
@@ -3823,10 +3899,12 @@ fun ApiKeysDialog(
                         prefs.edit().apply {
                             val p = primaryInput.trim()
                             val b = backupInput.trim()
-                            val os = openSubInput.trim()
                             if (p.isEmpty()) remove("groq_api_key") else putString("groq_api_key", p)
                             if (b.isEmpty()) remove("deepgram_api_key") else putString("deepgram_api_key", b)
-                            if (os.isEmpty()) remove("opensubtitles_api_key") else putString("opensubtitles_api_key", os)
+                            if (OPENSUBTITLES_ENABLED) {
+                                val os = openSubInput.trim()
+                                if (os.isEmpty()) remove("opensubtitles_api_key") else putString("opensubtitles_api_key", os)
+                            }
                         }.apply()
                         activity.toast("API keys saved")
                         onDismiss()
