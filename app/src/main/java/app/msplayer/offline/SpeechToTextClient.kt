@@ -43,6 +43,7 @@ object SpeechToTextClient {
     val DEFAULT_CLOUDFLARE_TOKEN: String get() = BuildConfig.DEFAULT_CLOUDFLARE_TOKEN
 
     const val GROQ_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
+    const val GROQ_TRANSLATIONS_ENDPOINT = "https://api.groq.com/openai/v1/audio/translations"
     const val DEEPGRAM_ENDPOINT = "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true"
 
     // Keep chunks compact (<= 10 MB / <= 8 min, 4 min first chunk for fast live preview)
@@ -100,6 +101,14 @@ object SpeechToTextClient {
         if (!compactCodec) return false
         if (measuredBitrateBps in 1L..MAX_DIRECT_MUX_BITRATE_BPS) return true
         return measuredBitrateBps <= 0L && estimatedAudioBytes in 1L..(15L * 1024L * 1024L)
+    }
+
+    fun decimationFactorForSampleRate(rateHz: Int): Int = when {
+        rateHz >= 88200 -> 6
+        rateHz >= 64000 -> 4
+        rateHz == 48000 -> 3
+        rateHz >= 32000 -> 2
+        else -> 1
     }
 
     fun chunkLimitDurationUs(chunkIndex: Int, totalDurationUs: Long): Long =
@@ -484,12 +493,7 @@ object SpeechToTextClient {
 
             fun ensureEncoderConfigured(rateHz: Int) {
                 if (encoder != null) return
-                decimationFactor = when (rateHz) {
-                    48000 -> 3
-                    44100 -> 2
-                    32000 -> 2
-                    else -> 1
-                }
+                decimationFactor = decimationFactorForSampleRate(rateHz)
                 val candidateRate = (rateHz / decimationFactor).coerceIn(16000, 48000)
                 val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
                 try {
@@ -762,24 +766,29 @@ object SpeechToTextClient {
     fun transcribeWithGroq(
         audioFile: File,
         apiKey: String,
-        onProgress: ((Int) -> Unit)? = null
+        onProgress: ((Int) -> Unit)? = null,
+        translateToEnglish: Boolean = false,
     ): List<AutoSubEngine.WordInfo> {
         val boundary = generateMultipartBoundary()
         val lineEnd = "\r\n"
         val twoHyphens = "--"
         val mime = mimeForExtension(audioFile.extension)
+        val modelName = if (translateToEnglish) "whisper-large-v3" else "whisper-large-v3-turbo"
+        val endpoint = if (translateToEnglish) GROQ_TRANSLATIONS_ENDPOINT else GROQ_ENDPOINT
         val preamble = buildString {
             append("$twoHyphens$boundary$lineEnd")
             append("Content-Disposition: form-data; name=\"model\"$lineEnd$lineEnd")
-            append("whisper-large-v3-turbo$lineEnd")
+            append("$modelName$lineEnd")
 
             append("$twoHyphens$boundary$lineEnd")
             append("Content-Disposition: form-data; name=\"response_format\"$lineEnd$lineEnd")
             append("verbose_json$lineEnd")
 
-            append("$twoHyphens$boundary$lineEnd")
-            append("Content-Disposition: form-data; name=\"timestamp_granularities[]\"$lineEnd$lineEnd")
-            append("word$lineEnd")
+            if (!translateToEnglish) {
+                append("$twoHyphens$boundary$lineEnd")
+                append("Content-Disposition: form-data; name=\"timestamp_granularities[]\"$lineEnd$lineEnd")
+                append("word$lineEnd")
+            }
 
             append("$twoHyphens$boundary$lineEnd")
             append("Content-Disposition: form-data; name=\"temperature\"$lineEnd$lineEnd")
@@ -793,7 +802,7 @@ object SpeechToTextClient {
         val fileBytes = audioFile.length().coerceAtLeast(0L)
         val totalRequestBytes = preamble.size.toLong() + fileBytes + epilogue.size.toLong()
 
-        val url = URL(GROQ_ENDPOINT)
+        val url = URL(endpoint)
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.doInput = true
@@ -803,7 +812,7 @@ object SpeechToTextClient {
         conn.connectTimeout = 45000
         conn.readTimeout = 180000
         conn.setRequestProperty("Authorization", "Bearer ${apiKey.trim()}")
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 MSPLAYER/0.6.1")
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 MSPLAYER/0.6.2")
         conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
 
         val totalForProgress = fileBytes.coerceAtLeast(1L)
@@ -857,7 +866,7 @@ object SpeechToTextClient {
         conn.readTimeout = 180000
         conn.setRequestProperty("Authorization", "Token ${apiKey.trim()}")
         conn.setRequestProperty("Content-Type", mimeForExtension(audioFile.extension))
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 MSPLAYER/0.6.1")
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 MSPLAYER/0.6.2")
 
         val totalForProgress = fileBytes.coerceAtLeast(1L)
         var uploadedBytes = 0L
@@ -933,6 +942,7 @@ object SpeechToTextClient {
         disabledBackupKeys: MutableSet<String>,
         hadBackupFallback: AtomicBoolean,
         lastErrorRef: AtomicReference<String?>,
+        translateToEnglish: Boolean = false,
     ): List<AutoSubEngine.WordInfo> {
         var lastErr: String? = null
         val candidatePrimary = primaryKeys.filter { it !in disabledPrimaryKeys }
@@ -942,7 +952,7 @@ object SpeechToTextClient {
                 val key = candidatePrimary[(startIdx + offset) % candidatePrimary.size]
                 if (key in disabledPrimaryKeys) continue
                 try {
-                    return transcribeWithGroq(chunk.file, key)
+                    return transcribeWithGroq(chunk.file, key, translateToEnglish = translateToEnglish)
                 } catch (e: Exception) {
                     val msg = e.message ?: e::class.java.simpleName
                     lastErr = msg
@@ -951,7 +961,7 @@ object SpeechToTextClient {
                     } else if (isRateLimit(msg) && candidatePrimary.size - offset <= 1 && !msg.contains("day", ignoreCase = true)) {
                         runCatching { Thread.sleep(1500) }
                         try {
-                            return transcribeWithGroq(chunk.file, key)
+                            return transcribeWithGroq(chunk.file, key, translateToEnglish = translateToEnglish)
                         } catch (retryErr: Exception) {
                             lastErr = retryErr.message ?: lastErr
                         }
@@ -963,7 +973,7 @@ object SpeechToTextClient {
         }
 
         lastErrorRef.compareAndSet(null, lastErr)
-        val candidateBackup = backupKeys.filter { it !in disabledBackupKeys }
+        val candidateBackup = if (translateToEnglish) emptyList() else backupKeys.filter { it !in disabledBackupKeys }
         if (candidateBackup.isNotEmpty()) {
             val startIdx = chunkIndex % candidateBackup.size
             for (offset in candidateBackup.indices) {
@@ -996,6 +1006,7 @@ object SpeechToTextClient {
         preferEnglishFirst: Boolean = true,
         groqKey: String = DEFAULT_GROQ_KEY,
         deepgramKey: String = DEFAULT_DEEPGRAM_KEY,
+        translateToEnglish: Boolean = false,
         fallbackChunkProvider: (() -> ExtractedChunk?)? = null,
         isCancelled: (() -> Boolean)? = null,
         onStageProgress: ((String, Int) -> Unit)? = null,
@@ -1064,6 +1075,7 @@ object SpeechToTextClient {
                         disabledBackupKeys = disabledBackupKeys,
                         hadBackupFallback = hadBackupFallback,
                         lastErrorRef = firstPrimaryErr,
+                        translateToEnglish = translateToEnglish,
                     )
                     val shifted = rawWords.map { w ->
                         AutoSubEngine.WordInfo(w.word, w.start + chunkBaseSec, w.end + chunkBaseSec)
@@ -1265,17 +1277,24 @@ object SpeechToTextClient {
         context: Context,
         videoTitle: String,
         cues: List<PlaybackRules.SubtitleCue>,
-        videoFile: File? = null
+        videoFile: File? = null,
+        langSuffix: String? = null,
     ): File? {
         val srtContent = toSrt(cues)
+        val payloadBytes = if (!langSuffix.isNullOrBlank()) {
+            byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + srtContent.toByteArray(Charsets.UTF_8)
+        } else {
+            srtContent.toByteArray(Charsets.UTF_8)
+        }
         val cleanTitle = videoTitle.substringBeforeLast('.')
         val sanitized = cleanTitle.replace(Regex("""[^a-zA-Z0-9._ -]"""), "_").trim()
-        val baseName = if (sanitized.isNotBlank()) sanitized else "MSPlayer_Subtitles"
+        val stem = if (sanitized.isNotBlank()) sanitized else "MSPlayer_Subtitles"
+        val fileName = if (!langSuffix.isNullOrBlank()) "$stem.${langSuffix.trim().lowercase(Locale.ROOT)}.srt" else "$stem.srt"
 
         if (videoFile != null && videoFile.parentFile?.canWrite() == true) {
             try {
-                val file = File(videoFile.parentFile, "$baseName.srt")
-                file.writeText(srtContent)
+                val file = File(videoFile.parentFile, fileName)
+                file.writeBytes(payloadBytes)
                 MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("application/x-subrip"), null)
                 return file
             } catch (_: Exception) {}
@@ -1284,8 +1303,8 @@ object SpeechToTextClient {
         val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         if (downloadDir != null && (downloadDir.exists() || downloadDir.mkdirs())) {
             try {
-                val file = File(downloadDir, "$baseName.srt")
-                file.writeText(srtContent)
+                val file = File(downloadDir, fileName)
+                file.writeBytes(payloadBytes)
                 MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("application/x-subrip"), null)
                 return file
             } catch (_: Exception) {}
@@ -1296,8 +1315,8 @@ object SpeechToTextClient {
             val msDir = File(moviesDir, "MSPlayer")
             if (msDir.exists() || msDir.mkdirs()) {
                 try {
-                    val file = File(msDir, "$baseName.srt")
-                    file.writeText(srtContent)
+                    val file = File(msDir, fileName)
+                    file.writeBytes(payloadBytes)
                     MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("application/x-subrip"), null)
                     return file
                 } catch (_: Exception) {}
@@ -1306,8 +1325,8 @@ object SpeechToTextClient {
 
         try {
             val extDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
-            val file = File(extDir, "$baseName.srt")
-            file.writeText(srtContent)
+            val file = File(extDir, fileName)
+            file.writeBytes(payloadBytes)
             return file
         } catch (_: Exception) {}
 
@@ -1331,8 +1350,8 @@ object SpeechToTextClient {
         val objectRegex = Regex("""\{([^{}]+)\}""")
         val punctWordRegex = Regex(""""punctuated_word"\s*:\s*"((?:[^"\\]|\\.)*)"""")
         val wordFieldRegex = Regex(""""word"\s*:\s*"((?:[^"\\]|\\.)*)"""")
-        val startFieldRegex = Regex(""""start"\s*:\s*([0-9.]+)""")
-        val endFieldRegex = Regex(""""end"\s*:\s*([0-9.]+)""")
+        val startFieldRegex = Regex(""""start"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)""")
+        val endFieldRegex = Regex(""""end"\s*:\s*(-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)""")
         val textFieldRegex = Regex(""""text"\s*:\s*"((?:[^"\\]|\\.)*)"""")
 
         for (match in objectRegex.findAll(jsonString)) {
@@ -1344,8 +1363,8 @@ object SpeechToTextClient {
 
             if (wordMatch != null && startMatch != null && endMatch != null) {
                 val w = unescapeJson(wordMatch.groupValues[1])
-                val s = startMatch.groupValues[1].toDoubleOrNull() ?: 0.0
-                val e = endMatch.groupValues[1].toDoubleOrNull() ?: (s + 0.3)
+                val s = (startMatch.groupValues[1].toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0)
+                val e = (endMatch.groupValues[1].toDoubleOrNull() ?: (s + 0.3)).coerceAtLeast(s)
                 if (w.isNotEmpty()) {
                     words.add(AutoSubEngine.WordInfo(w, s, e))
                 }
@@ -1363,8 +1382,8 @@ object SpeechToTextClient {
 
             if (textMatch != null && startMatch != null && endMatch != null) {
                 val text = unescapeJson(textMatch.groupValues[1])
-                val start = startMatch.groupValues[1].toDoubleOrNull() ?: 0.0
-                val end = endMatch.groupValues[1].toDoubleOrNull() ?: (start + 2.0)
+                val start = (startMatch.groupValues[1].toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0)
+                val end = (endMatch.groupValues[1].toDoubleOrNull() ?: (start + 2.0)).coerceAtLeast(start + 0.1)
                 val splitWords = text.split(Regex("""\s+""")).filter { it.isNotBlank() }
                 if (splitWords.isNotEmpty()) {
                     val wordDuration = (end - start) / splitWords.size

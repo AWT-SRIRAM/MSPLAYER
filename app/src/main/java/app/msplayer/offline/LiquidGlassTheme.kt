@@ -13,14 +13,31 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
@@ -32,9 +49,14 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -141,10 +163,11 @@ fun extractAdaptiveMoodColors(bitmap: Bitmap?): AdaptiveMoodColors {
 @Composable
 fun rememberGlassEnabled(): State<Boolean> = GlassTheme.enabled.collectAsState()
 
-fun liquidSpecularBrush(accentGlow: Float = 0.24f, accentColor: Color = Accent): Brush = Brush.linearGradient(
+fun liquidSpecularBrush(accentGlow: Float = 0.28f, accentColor: Color = Accent): Brush = Brush.linearGradient(
     colors = listOf(
-        Color.White.copy(alpha = 0.46f),
-        Color.White.copy(alpha = 0.12f),
+        Color.White.copy(alpha = 0.56f),
+        Color.White.copy(alpha = 0.16f),
+        Color.White.copy(alpha = 0.06f),
         accentColor.copy(alpha = accentGlow),
     )
 )
@@ -308,8 +331,8 @@ fun Modifier.liquidGlassSurface(
 fun Modifier.frostedGlassChrome(
     enabled: Boolean,
     shape: Shape = RoundedCornerShape(16.dp),
-    tint: Color = Color(0x780C121C),
-    fallbackColor: Color = Color.Black.copy(alpha = 0.50f),
+    tint: Color = Color(0x7E0B131F),
+    fallbackColor: Color = Color.Black.copy(alpha = 0.62f),
     borderWidth: Dp = 1.dp,
 ): Modifier = if (enabled) {
     this
@@ -317,17 +340,165 @@ fun Modifier.frostedGlassChrome(
         .background(
             Brush.verticalGradient(
                 listOf(
-                    Color.White.copy(alpha = 0.10f).compositeOver(tint),
+                    Color.White.copy(alpha = 0.13f).compositeOver(tint),
                     tint,
-                    Color(0x94070B11),
+                    Color(0xFF04080F).copy(alpha = (tint.alpha + 0.14f).coerceIn(0.45f, 0.96f)).compositeOver(tint),
                 )
             ),
             shape,
         )
+        .drawWithContent {
+            drawContent()
+            drawLine(
+                brush = Brush.horizontalGradient(
+                    listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.26f),
+                        Color.White.copy(alpha = 0.08f),
+                        Color.Transparent,
+                    )
+                ),
+                start = Offset(size.width * 0.08f, 1.dp.toPx()),
+                end = Offset(size.width * 0.92f, 1.dp.toPx()),
+                strokeWidth = 1.dp.toPx(),
+            )
+        }
         .border(borderWidth, liquidSpecularBrush(), shape)
 } else {
     this
         .clip(shape)
         .background(fallbackColor, shape)
         .border(borderWidth, Color.White.copy(alpha = 0.18f), shape)
+}
+
+@Composable
+fun LiquidGlassPopupMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    offset: DpOffset = DpOffset(0.dp, 4.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val glassEnabled by rememberGlassEnabled()
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        modifier = modifier
+            .frostedGlassChrome(
+                enabled = glassEnabled,
+                shape = RoundedCornerShape(18.dp),
+                tint = Color(0xEB070D17),
+                fallbackColor = Color(0xFF131922),
+            ),
+        offset = offset,
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        border = null,
+    ) {
+        CompositionLocalProvider(LocalContentColor provides Color.White) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun LiquidGlassPopupMenuItem(
+    text: @Composable () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
+) {
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(min = 168.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .iosLiquidPress(interactionSource, enabled = enabled, scaleDown = 0.97f, sheenAlpha = 0.10f)
+            .clickable(enabled = enabled, interactionSource = interactionSource, indication = androidx.compose.material3.ripple(), onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (leadingIcon != null) {
+            Box(Modifier.padding(end = 10.dp)) { leadingIcon() }
+        }
+        Box(Modifier.weight(1f)) {
+            ProvideTextStyle(
+                TextStyle(
+                    color = if (enabled) Color.White else Color.White.copy(alpha = 0.42f),
+                    fontSize = 14.sp,
+                )
+            ) {
+                text()
+            }
+        }
+        if (trailingIcon != null) {
+            Box(Modifier.padding(start = 10.dp)) { trailingIcon() }
+        }
+    }
+}
+
+@Composable
+fun LiquidGlassAlertDialog(
+    onDismissRequest: () -> Unit,
+    title: (@Composable () -> Unit)? = null,
+    text: (@Composable () -> Unit)? = null,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)? = null,
+    immersiveBlur: Boolean = false,
+) {
+    val glassEnabled by rememberGlassEnabled()
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        if (immersiveBlur) ImmersivePlayerDialog()
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            val boundedHeight = (maxHeight - 16.dp).coerceAtLeast(220.dp)
+            Column(
+                Modifier
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth(0.94f)
+                    .heightIn(max = boundedHeight)
+                    .frostedGlassChrome(
+                        enabled = glassEnabled,
+                        shape = RoundedCornerShape(24.dp),
+                        tint = Color(0x940B131F),
+                        fallbackColor = Color(0xFF141A24),
+                    )
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
+                CompositionLocalProvider(LocalContentColor provides Color.White) {
+                    if (title != null) {
+                        ProvideTextStyle(TextStyle(color = Color.White, fontSize = 18.sp)) {
+                            Box(Modifier.padding(bottom = 10.dp)) { title() }
+                        }
+                    }
+                    if (text != null) {
+                        ProvideTextStyle(TextStyle(color = Color.White.copy(alpha = 0.88f), fontSize = 14.sp)) {
+                            Box(Modifier.weight(1f, fill = false)) { text() }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Spacer(Modifier.weight(1f))
+                        if (dismissButton != null) {
+                            dismissButton()
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        confirmButton()
+                    }
+                }
+            }
+        }
+    }
 }

@@ -10,7 +10,7 @@ import kotlin.math.abs
 import kotlin.math.sign
 
 object GestureRules {
-    val rates = floatArrayOf(.25f, .5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f)
+    val rates = floatArrayOf(.25f, .5f, 1f, 1.5f, 2f, 2.5f, 3f, 4f)
     val rulerStops = floatArrayOf(.25f, .5f, 1f, 1.5f, 2f, 2.5f, 3f, 4f)
 
     fun fraction(rate: Float): Float {
@@ -23,12 +23,12 @@ object GestureRules {
 
     fun snappedRate(base: Float, deltaX: Float, width: Float, deadZonePx: Float = 0f): Float {
         if (abs(deltaX) <= deadZonePx) {
-            val baseIndex = rates.indices.minByOrNull { abs(rates[it] - base) } ?: 7
+            val baseIndex = rates.indices.minByOrNull { abs(rates[it] - base) } ?: 4
             return rates[baseIndex]
         }
         val effectiveDelta = deltaX - sign(deltaX) * deadZonePx
-        val baseIndex = rates.indices.minByOrNull { abs(rates[it] - base) } ?: 7
-        val stepPx = (width.coerceAtLeast(240f) * 0.52f) / rates.lastIndex.coerceAtLeast(1)
+        val baseIndex = rates.indices.minByOrNull { abs(rates[it] - base) } ?: 4
+        val stepPx = (width.coerceAtLeast(240f) * 0.24f) / rates.lastIndex.coerceAtLeast(1)
         val offsetIndex = kotlin.math.round(effectiveDelta / stepPx).toInt()
         val targetIndex = (baseIndex + offsetIndex).coerceIn(0, rates.lastIndex)
         return rates[targetIndex]

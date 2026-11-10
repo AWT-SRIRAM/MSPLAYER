@@ -24,8 +24,8 @@ android {
         applicationId = "app.msplayer.offline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.6.1"
+        versionCode = 9
+        versionName = "0.6.2"
         ndk { abiFilters += (project.findProperty("testAbi")?.toString() ?: "arm64-v8a") }
         testInstrumentationRunner = "app.msplayer.offline.SafeTestRunner"
         manifestPlaceholders["appLabel"] = "MS PLAYER"
@@ -33,6 +33,10 @@ android {
         buildConfigField("String", "DEFAULT_DEEPGRAM_KEY", "\"${localSecret("MSPLAYER_DEEPGRAM_KEY")}\"")
         buildConfigField("String", "DEFAULT_CLOUDFLARE_TOKEN", "\"${localSecret("MSPLAYER_CLOUDFLARE_TOKEN")}\"")
         buildConfigField("String", "DEFAULT_OPENSUBTITLES_KEY", "\"${localSecret("MSPLAYER_OPENSUBTITLES_KEY")}\"")
+        buildConfigField("String", "DEFAULT_SUBDL_KEY", "\"${localSecret("MSPLAYER_SUBDL_KEY")}\"")
+        buildConfigField("String", "DEFAULT_SUBSOURCE_KEY", "\"${localSecret("MSPLAYER_SUBSOURCE_KEY")}\"")
+        buildConfigField("String", "DEFAULT_WYZIE_KEY", "\"${localSecret("MSPLAYER_WYZIE_KEY")}\"")
+        buildConfigField("String", "DEFAULT_TMDB_KEY", "\"${localSecret("MSPLAYER_TMDB_KEY")}\"")
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

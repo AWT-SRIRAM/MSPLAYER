@@ -27,7 +27,7 @@ object OpenSubtitlesClient {
 
     const val API_BASE = "https://api.opensubtitles.com/api/v1"
     const val WEB_BASE = "https://www.opensubtitles.org"
-    const val USER_AGENT = "MSPLAYER v0.6.1"
+    const val USER_AGENT = "MSPLAYER v0.6.2"
     private const val MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
 
     val DEFAULT_API_KEY: String get() = BuildConfig.DEFAULT_OPENSUBTITLES_KEY
@@ -188,15 +188,26 @@ object OpenSubtitlesClient {
         query: String,
         languageCode2: String = "en",
         movieHash: String? = null,
+        tmdbId: Int? = null,
+        imdbId: String? = null,
+        seasonNumber: Int? = null,
+        episodeNumber: Int? = null,
     ): List<SubtitleCandidate> {
         val cleanKey = apiKey.trim()
         if (cleanKey.isBlank()) error("OpenSubtitles API key required for in-app search")
         val cleanQuery = query.trim()
-        if (cleanQuery.isBlank() && movieHash.isNullOrBlank()) error("Enter a title to search")
+        val cleanImdb = imdbId?.trim()?.removePrefix("tt")?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+        if (cleanQuery.isBlank() && movieHash.isNullOrBlank() && tmdbId == null && cleanImdb == null) {
+            error("Enter a title to search")
+        }
 
         val params = buildList {
             if (!movieHash.isNullOrBlank()) add("moviehash=${URLEncoder.encode(movieHash.trim(), "UTF-8")}")
+            if (tmdbId != null && tmdbId > 0) add("tmdb_id=$tmdbId")
+            if (cleanImdb != null) add("imdb_id=$cleanImdb")
             if (cleanQuery.isNotBlank()) add("query=${URLEncoder.encode(cleanQuery, "UTF-8")}")
+            if (seasonNumber != null && seasonNumber > 0) add("season_number=$seasonNumber")
+            if (episodeNumber != null && episodeNumber > 0) add("episode_number=$episodeNumber")
             if (languageCode2.isNotBlank()) add("languages=${URLEncoder.encode(languageCode2.trim().lowercase(Locale.ROOT), "UTF-8")}")
         }.joinToString("&")
 
@@ -351,46 +362,51 @@ object OpenSubtitlesClient {
         val bytes = readBoundedBytes(input, MAX_ARCHIVE_BYTES)
         if (bytes.isEmpty()) return emptyList()
 
-        val isZip = (bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() &&
-            bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()) ||
-            originalName.endsWith(".zip", ignoreCase = true)
+        val hasZipMagic = bytes.size >= 4 &&
+            bytes[0] == 0x50.toByte() &&
+            bytes[1] == 0x4B.toByte() &&
+            (bytes[2] == 0x03.toByte() || bytes[2] == 0x05.toByte() || bytes[2] == 0x07.toByte())
 
-        if (isZip) {
+        if (hasZipMagic) {
             val outFiles = mutableListOf<File>()
             val prefix = sanitizeStem(preferredPrefix ?: "").ifBlank { "OpenSubtitles" }
-            ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
-                var entry = zis.nextEntry
-                while (entry != null) {
-                    val entryBase = entry.name.substringAfterLast('/').substringAfterLast('\\')
-                    val ext = entryBase.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    if (!entry.isDirectory &&
-                        !entry.name.contains("__MACOSX", ignoreCase = true) &&
-                        entryBase.isNotBlank() &&
-                        ext in subtitleExtensions
-                    ) {
-                        val content = readBoundedBytes(zis, MAX_ARCHIVE_BYTES)
-                        if (content.isNotEmpty()) {
-                            val cleanEntryName = sanitizeStem(entryBase.substringBeforeLast('.')).ifBlank { prefix }
-                            val fileName = if (cleanEntryName.startsWith(prefix, ignoreCase = true)) {
-                                "$cleanEntryName.$ext"
-                            } else {
-                                "${prefix}.${cleanEntryName}.$ext"
+            runCatching {
+                ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        val entryBase = entry.name.substringAfterLast('/').substringAfterLast('\\')
+                        val ext = entryBase.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                        if (!entry.isDirectory &&
+                            !entry.name.contains("__MACOSX", ignoreCase = true) &&
+                            entryBase.isNotBlank() &&
+                            ext in subtitleExtensions
+                        ) {
+                            val content = readBoundedBytes(zis, MAX_ARCHIVE_BYTES)
+                            if (content.isNotEmpty()) {
+                                val cleanEntryName = sanitizeStem(entryBase.substringBeforeLast('.')).ifBlank { prefix }
+                                val fileName = if (cleanEntryName.startsWith(prefix, ignoreCase = true)) {
+                                    "$cleanEntryName.$ext"
+                                } else {
+                                    "${prefix}.${cleanEntryName}.$ext"
+                                }
+                                val target = uniqueFile(destDir, fileName)
+                                target.writeBytes(content)
+                                outFiles += target
                             }
-                            val target = uniqueFile(destDir, fileName)
-                            target.writeBytes(content)
-                            outFiles += target
                         }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
                     }
-                    zis.closeEntry()
-                    entry = zis.nextEntry
                 }
             }
-            return outFiles.sortedBy {
-                when (it.extension.lowercase(Locale.ROOT)) {
-                    "srt" -> 0
-                    "ass", "ssa" -> 1
-                    "vtt" -> 2
-                    else -> 3
+            if (outFiles.isNotEmpty()) {
+                return outFiles.sortedBy {
+                    when (it.extension.lowercase(Locale.ROOT)) {
+                        "srt" -> 0
+                        "ass", "ssa" -> 1
+                        "vtt" -> 2
+                        else -> 3
+                    }
                 }
             }
         }
@@ -402,9 +418,11 @@ object OpenSubtitlesClient {
             }
         } else bytes
 
-        val rawBase = originalName.removeSuffix(".gz").removeSuffix(".GZ")
-        val ext = rawBase.substringAfterLast('.', "").lowercase(Locale.ROOT).takeIf { it in subtitleExtensions } ?: "srt"
-        val cleanStem = sanitizeStem(rawBase.substringBeforeLast('.')).ifBlank { "subtitle" }
+        val rawBase = originalName.removeSuffix(".gz").removeSuffix(".GZ").removeSuffix(".zip").removeSuffix(".ZIP")
+        val parsedExt = rawBase.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val ext = parsedExt.takeIf { it in subtitleExtensions } ?: "srt"
+        val stemRaw = if (parsedExt in subtitleExtensions) rawBase.substringBeforeLast('.') else rawBase
+        val cleanStem = sanitizeStem(stemRaw).ifBlank { "subtitle" }
         val targetName = if (!preferredPrefix.isNullOrBlank() && !cleanStem.startsWith(preferredPrefix, ignoreCase = true)) {
             "${sanitizeStem(preferredPrefix)}.${cleanStem}.$ext"
         } else {
@@ -429,10 +447,10 @@ object OpenSubtitlesClient {
         return baos.toByteArray()
     }
 
-    private fun sanitizeStem(raw: String): String =
+    internal fun sanitizeStem(raw: String): String =
         raw.replace(Regex("""[^a-zA-Z0-9._ -]"""), "_").trim().take(80)
 
-    private fun uniqueFile(dir: File, desiredName: String): File {
+    internal fun uniqueFile(dir: File, desiredName: String): File {
         val direct = File(dir, desiredName)
         if (!direct.exists()) return direct
         val stem = desiredName.substringBeforeLast('.')
@@ -483,7 +501,7 @@ object OpenSubtitlesClient {
         )
     }
 
-    private fun escapeJson(s: String): String =
+    internal fun escapeJson(s: String): String =
         s.replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
@@ -500,6 +518,15 @@ object OpenSubtitlesClient {
             @Suppress("UNCHECKED_CAST")
             return (v as? Map<String, Any?>) ?: emptyMap()
         }
+
+        fun parseArray(json: String): List<Any?> {
+            val p = Parser(json)
+            val v = p.parseValue()
+            @Suppress("UNCHECKED_CAST")
+            return (v as? List<Any?>) ?: emptyList()
+        }
+
+        fun parseAny(json: String): Any? = Parser(json).parseValue()
 
         private class Parser(private val s: String) {
             private var i = 0

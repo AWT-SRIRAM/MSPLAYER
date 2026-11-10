@@ -166,37 +166,50 @@ object ContainerDemuxer {
     }
 
     /** Extracts embedded text subtitle tracks/cues from an MKV/WebM file URI or FD. */
-    fun parseMkv(context: Context, uri: Uri): DemuxResult {
+    fun parseMkv(
+        context: Context,
+        uri: Uri,
+        onProgressBatch: ((Map<Int, EmbeddedTrack>, Map<Int, List<PlaybackRules.SubtitleCue>>) -> Unit)? = null,
+    ): DemuxResult {
         if (uri.scheme == "file") {
             val f = uri.path?.let(::File)
-            if (f != null && f.exists()) return parseMkv(f)
+            if (f != null && f.exists()) return parseMkv(f, onProgressBatch)
         }
         return runCatching {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                parseMkv(pfd.fileDescriptor)
+                parseMkv(pfd.fileDescriptor, onProgressBatch)
             } ?: DemuxResult(emptyMap(), emptyMap())
         }.getOrDefault(DemuxResult(emptyMap(), emptyMap()))
     }
 
-    fun parseMkv(file: File): DemuxResult {
+    fun parseMkv(
+        file: File,
+        onProgressBatch: ((Map<Int, EmbeddedTrack>, Map<Int, List<PlaybackRules.SubtitleCue>>) -> Unit)? = null,
+    ): DemuxResult {
         if (!file.exists() || !file.canRead() || file.length() < 12) {
             return DemuxResult(emptyMap(), emptyMap())
         }
         return runCatching {
-            FileInputStream(file).use { fis -> parseChannel(fis.channel) }
+            FileInputStream(file).use { fis -> parseChannel(fis.channel, onProgressBatch) }
         }.getOrDefault(DemuxResult(emptyMap(), emptyMap()))
     }
 
-    fun parseMkv(fd: FileDescriptor): DemuxResult {
+    fun parseMkv(
+        fd: FileDescriptor,
+        onProgressBatch: ((Map<Int, EmbeddedTrack>, Map<Int, List<PlaybackRules.SubtitleCue>>) -> Unit)? = null,
+    ): DemuxResult {
         if (!fd.valid()) return DemuxResult(emptyMap(), emptyMap())
         return runCatching {
             val channel = FileInputStream(fd).channel
             channel.position(0)
-            parseChannel(channel)
+            parseChannel(channel, onProgressBatch)
         }.getOrDefault(DemuxResult(emptyMap(), emptyMap()))
     }
 
-    private fun parseChannel(channel: FileChannel): DemuxResult {
+    private fun parseChannel(
+        channel: FileChannel,
+        onProgressBatch: ((Map<Int, EmbeddedTrack>, Map<Int, List<PlaybackRules.SubtitleCue>>) -> Unit)? = null,
+    ): DemuxResult {
         val reader = BufferedChannelReader(channel)
         val fileLength = reader.fileLength
         if (fileLength < 12L) return DemuxResult(emptyMap(), emptyMap())
@@ -206,6 +219,7 @@ object ContainerDemuxer {
 
         var timecodeScale = 1_000_000L // 1 ms default
         var clusterTimecode = 0L
+        var lastEmittedCueTotal = 0
 
         val topSegmentLevelIds = setOf(
             0x114D9B74L, // SeekHead
@@ -324,11 +338,15 @@ object ContainerDemuxer {
                             0xA3L -> { // SimpleBlock
                                 if (csize > 4) {
                                     val tNum = reader.readVintValue()?.toInt() ?: -1
+                                    if (tNum !in cues) {
+                                        reader.seek(cend)
+                                        continue
+                                    }
                                     val relTime = reader.readShortSigned()
                                     reader.readByte() // flags
                                     val headerLen = (reader.position() - cpos).toInt()
                                     val payloadLen = (csize - headerLen).toInt()
-                                    if (payloadLen in 1..262144 && tNum in cues) {
+                                    if (payloadLen in 1..262144) {
                                         val payload = ByteArray(payloadLen)
                                         if (reader.readFully(payload)) {
                                             val startMs = ((clusterTimecode + relTime) * (timecodeScale / 1_000_000.0)).toLong()
@@ -353,11 +371,15 @@ object ContainerDemuxer {
                                         0xA1L -> { // Block
                                             if (bgSize > 4) {
                                                 val tNum = reader.readVintValue()?.toInt() ?: -1
+                                                if (tNum !in cues) {
+                                                    reader.seek(bgEnd)
+                                                    continue
+                                                }
                                                 val relTime = reader.readShortSigned()
                                                 reader.readByte() // flags
                                                 val hLen = (reader.position() - bgPos).toInt()
                                                 val pLen = (bgSize - hLen).toInt()
-                                                if (pLen in 1..262144 && tNum in cues) {
+                                                if (pLen in 1..262144) {
                                                     val payload = ByteArray(pLen)
                                                     if (reader.readFully(payload)) {
                                                         bgBlock = Triple(tNum, relTime, payload)
@@ -386,6 +408,13 @@ object ContainerDemuxer {
                         reader.seek(cend)
                     }
                     reader.seek(clusterEnd)
+                    if (onProgressBatch != null) {
+                        val totalNow = cues.values.sumOf { it.size }
+                        if (totalNow - lastEmittedCueTotal >= 15) {
+                            lastEmittedCueTotal = totalNow
+                            onProgressBatch(tracks.toMap(), cues.mapValues { (_, list) -> list.sortedBy { it.startMs } })
+                        }
+                    }
                 }
                 else -> {
                     if (size < 0L) break

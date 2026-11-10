@@ -207,6 +207,34 @@ object PlaybackRules {
     fun findPrevCue(cues: List<Long>, currentMs: Long): Long? =
         cues.lastOrNull { it < currentMs - 1200L }
 
+    /**
+     * O(log N + k) lookup for active subtitles at [effectivePos] on a list sorted by `startMs`.
+     * Scans a short window backward to capture multi-second overlapping cues without full linear scans.
+     */
+    fun findActiveCueLines(cues: List<SubtitleCue>, effectivePos: Long): List<String> {
+        if (cues.isEmpty()) return emptyList()
+        val bs = cues.binarySearchBy(effectivePos) { it.startMs }
+        val insertIdx = if (bs >= 0) bs else -(bs + 1)
+        var startIdx = (insertIdx - 1).coerceAtLeast(0)
+        var backSteps = 0
+        while (startIdx > 0 && backSteps < 16 && (effectivePos - cues[startIdx].startMs) <= 20_000L) {
+            startIdx--
+            backSteps++
+        }
+        val active = ArrayList<String>(2)
+        for (i in startIdx until cues.size) {
+            val cue = cues[i]
+            if (cue.startMs > effectivePos) break
+            if (effectivePos <= cue.endMs) {
+                val text = cue.text.trim()
+                if (text.isNotBlank() && text !in active) {
+                    active.add(text)
+                }
+            }
+        }
+        return active
+    }
+
     fun isStreamUrl(url: String): Boolean {
         val lower = url.trim().lowercase(java.util.Locale.ROOT)
         return lower.startsWith("http://") || lower.startsWith("https://") ||

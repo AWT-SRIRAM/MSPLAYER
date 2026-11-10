@@ -389,17 +389,35 @@ fun MusicPlayerScreen(
         "Queue" -> PlayerSidePanel("Playing Queue",{panel=null}) { queue.forEach { track -> TrackChoice(track.title,track.uri==item.uri,onClick={service.playQueueItem(track);panel=null}) } }
         "Speed" -> PlayerSidePanel("Playback speed",{panel=null}) { listOf(.25f,.5f,1f,1.5f,2f,2.5f,3f,4f).forEach { rate -> TrackChoice("${rate}×",kotlin.math.abs(state.rate-rate)<.01f,onClick={service.rate(rate)}) } }
         "Lyrics" -> PlayerSidePanel("Lyrics",{panel=null}) {
-            TextButton(onClick={lyricsPicker.launch(arrayOf("*/*"))}) { Text("Open local lyrics") }
-            if(lyrics.isEmpty()) Text("No embedded or local lyrics available",color=Color.LightGray)
+            Box(
+                Modifier.fillMaxWidth()
+                    .frostedGlassChrome(glassEnabled, RoundedCornerShape(14.dp), tint = Color(0x520C1420))
+                    .clickable { lyricsPicker.launch(arrayOf("*/*")) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) { Text("Load lyrics file", color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
+            Spacer(Modifier.height(8.dp))
+            if(lyrics.isEmpty()) Text("No lyrics",color=Muted,fontSize=13.sp)
             val current=lyrics.indexOfLast { it.time!=null && it.time<=timeline.position }
             val scroll=androidx.compose.foundation.lazy.rememberLazyListState()
             LaunchedEffect(current) { if(current>=0) scroll.animateScrollToItem(current) }
             LazyColumn(Modifier.fillMaxWidth().height(340.dp),state=scroll) { items(lyrics.size) { i -> Text(lyrics[i].text,color=if(i==current) dynamicPrimary else Color.White,modifier=Modifier.padding(vertical=8.dp)) } }
         }
-        "Options" -> PlayerSidePanel("Music options",{panel=null}) {
-            TextButton(onClick={panel="Effects"}) { Text("Equalizer and effects") }
-            TextButton(onClick={service.markAB()}) { Text("${if(ab.first==null) "Set A" else if(ab.second==null) "Set B" else "Clear A–B repeat"}") }
-            TextButton(onClick={activity.closeApp()}) { Text("Exit MS PLAYER") }
+        "Options" -> PlayerSidePanel("Options",{panel=null}) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    "Equalizer" to { panel = "Effects" },
+                    (if (ab.first == null) "Set A" else if (ab.second == null) "Set B" else "Clear A-B") to { service.markAB(); panel = null },
+                    "Exit" to { activity.closeApp() },
+                ).forEach { (label, act) ->
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .frostedGlassChrome(glassEnabled, RoundedCornerShape(14.dp), tint = Color(0x540B131F))
+                            .clickable(onClick = act)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) { Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
+                }
+            }
         }
     }
 }

@@ -96,10 +96,39 @@ class PlaybackService : Service() {
 
     fun effects(value: AudioEffectSettings) {
         if (released) return
-        if (audioEffects.apply(player, value)) {
-            effectSettings.value = value
-            value.save(this)
+        val previous = effectSettings.value
+        val needVlcRebuild = ::vlc.isInitialized &&
+            previous.spatializerOptions() != value.spatializerOptions()
+        effectSettings.value = value
+        value.save(this)
+        if (needVlcRebuild && state.value.item != null) {
+            rebuildVlcKeepingPosition(value)
+        } else {
+            audioEffects.apply(player, value)
         }
+    }
+
+    private fun rebuildVlcKeepingPosition(settings: AudioEffectSettings) {
+        endTemporarySpeed()
+        val prior = state.value.copy(playing = state.value.playing && !requestedPause)
+        if (prior.item == null) return
+        opening?.cancel()
+        pendingStyleRestore = prior
+        pendingStyleTracks = prior
+        player.setEventListener(null)
+        player.stop()
+        if (videoAttached) player.detachViews()
+        activeDescriptor?.close()
+        activeDescriptor = null
+        player.release()
+        vlc.release()
+        vlc = createVlc(settings)
+        player = MediaPlayer(vlc)
+        audioEffects.apply(player, settings)
+        applyVolume()
+        bindPlayerEvents()
+        videoLayout?.let { player.attachViews(it, null, true, false) }
+        openCurrent(prior.position, restore = false, keepSubtitleChoice = true)
     }
 
     fun diagnosticsEnabled(enabled: Boolean) {
@@ -252,7 +281,7 @@ class PlaybackService : Service() {
         val target = seekTarget
         if (target != null) {
             val elapsed = SystemClock.elapsedRealtime() - seekStarted
-            if ((elapsed > 100 && kotlin.math.abs(time - target) <= 1500) || elapsed > 4000) {
+            if ((elapsed > 150 && (kotlin.math.abs(time - seekOrigin) > 500 || kotlin.math.abs(time - target) <= 1500)) || elapsed > 1800) {
                 diagnostics.event("seek-settled target=$target actual=$time elapsedMs=$elapsed")
                 clearSeek()
             } else return target
@@ -338,7 +367,9 @@ class PlaybackService : Service() {
             .createNotificationChannel(
                 NotificationChannel("playback", "Playback", NotificationManager.IMPORTANCE_LOW)
             )
-        vlc = createVlc()
+        val initialEffects = AudioEffectSettings.load(this)
+        effectSettings.value = initialEffects
+        vlc = createVlc(initialEffects)
         player = MediaPlayer(vlc)
         audioManager = getSystemService(AudioManager::class.java)
         audioManager.registerAudioDeviceCallback(routeCallback, Handler(Looper.getMainLooper()))
@@ -380,22 +411,26 @@ class PlaybackService : Service() {
             @Suppress("DEPRECATION")
             registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         bindPlayerEvents()
-        effects(AudioEffectSettings.load(this))
+        audioEffects.apply(player, initialEffects)
         diagnostics.enabled = Store.prefs(this).getBoolean("diagnostics", false)
         ticker =
             scope.launch {
-                var ticks = 0
+                var lastTimelineAt = 0L
+                var lastDiagAt = 0L
+                var lastSaveAt = SystemClock.elapsedRealtime()
                 while (isActive) {
-                    delay(33)
-                    ticks++
+                    val hasSubOverlay = (selectedSubTracks.isNotEmpty() || parsedCues.isNotEmpty() || legacyFolderCues.isNotEmpty())
+                    delay(if (hasSubOverlay && player.isPlaying) 16L else 48L)
                     if (state.value.item != null && !finished) {
                         val posNow = nativePosition()
-                        if (selectedSubTracks.isNotEmpty() || parsedCues.isNotEmpty()) {
+                        if (hasSubOverlay) {
                             updateSubtitleTextAt(posNow)
                         } else if (activeSubtitleText.value != null) {
                             activeSubtitleText.value = null
                         }
-                        if (ticks % 15 == 0) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastTimelineAt >= 480L) {
+                            lastTimelineAt = now
                             if (state.value.videoWidth == 0 && state.value.item?.audio == false) {
                                 player.currentVideoTrack?.let { video ->
                                     val dimensions = metadataDimensions ?: PlaybackRules.displayDimensions(video.width, video.height, video.orientation, video.sarNum, video.sarDen)
@@ -413,14 +448,20 @@ class PlaybackService : Service() {
                             if (repeatB != null && state.value.position >= repeatB!! && player.isPlaying) seek(repeatA ?: 0, false)
                             updateSession()
                         }
-                        if (ticks % 30 == 0) diagnostics.sample(player, state.value)
-                        if (ticks % 300 == 0) savePosition()
+                        if (now - lastDiagAt >= 1000L) {
+                            lastDiagAt = now
+                            diagnostics.sample(player, state.value)
+                        }
+                        if (now - lastSaveAt >= 10000L) {
+                            lastSaveAt = now
+                            savePosition()
+                        }
                     }
                 }
             }
     }
 
-    private fun createVlc(): LibVLC = LibVLC(
+    private fun createVlc(eff: AudioEffectSettings = effectSettings.value): LibVLC = LibVLC(
         this,
         arrayListOf(
             "--no-video-title-show",
@@ -431,6 +472,7 @@ class PlaybackService : Service() {
             "--avcodec-skiploopfilter=1",
         ).apply {
             addAll(SubtitleStyle.load(this@PlaybackService).options())
+            addAll(eff.spatializerOptions())
             if (BuildConfig.DEBUG && Store.prefs(this@PlaybackService).getBoolean("native_verbose", false)) add("--verbose=2")
         },
     )
@@ -487,6 +529,10 @@ class PlaybackService : Service() {
                     }
                 MediaPlayer.Event.Buffering ->
                     if (!requestedPause) state.value = state.value.copy(buffering = event.buffering < 100f)
+                MediaPlayer.Event.TimeChanged ->
+                    if (!finished && (selectedSubTracks.isNotEmpty() || parsedCues.isNotEmpty() || legacyFolderCues.isNotEmpty())) {
+                        updateSubtitleTextAt(nativePosition())
+                    }
                 MediaPlayer.Event.EndReached -> {
                     Library.videoPlaybackActive.value = false
                     finished = true
@@ -611,10 +657,24 @@ class PlaybackService : Service() {
                 val extLower = (localFile?.extension ?: item.title.substringAfterLast('.', "")).lowercase()
 
                 if (extLower == "mkv" || extLower == "webm") {
+                    val onBatch: (Map<Int, ContainerDemuxer.EmbeddedTrack>, Map<Int, List<PlaybackRules.SubtitleCue>>) -> Unit = { batchTracks, batchCues ->
+                        scope.launch(Dispatchers.Main) {
+                            if (state.value.item?.uri == item.uri) {
+                                embeddedTracks = batchTracks
+                                embeddedCuesByTrack = batchCues
+                                refreshTracks(restore = false)
+                                if (selectedSubTracks.isNotEmpty()) {
+                                    syncSubtitleTracks(persistName = false)
+                                } else {
+                                    maybeAutoSelectPrimarySubtitle()
+                                }
+                            }
+                        }
+                    }
                     val demux = if (localFile != null) {
-                        ContainerDemuxer.parseMkv(localFile)
+                        ContainerDemuxer.parseMkv(localFile, onBatch)
                     } else {
-                        ContainerDemuxer.parseMkv(this@PlaybackService, uri)
+                        ContainerDemuxer.parseMkv(this@PlaybackService, uri, onBatch)
                     }
                     withContext(Dispatchers.Main) {
                         if (state.value.item?.uri == item.uri) {
@@ -744,7 +804,7 @@ class PlaybackService : Service() {
                         media.addOption(":network-caching=1500")
                         media.addOption(":http-reconnect")
                         media.addOption(":http-forward-cookies")
-                        media.addOption(":http-user-agent=Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 MSPLAYER/0.6.1")
+                        media.addOption(":http-user-agent=Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 MSPLAYER/0.6.2")
                         Store.recordStream(this@PlaybackService, item.uri)
                     }
                     val start =
@@ -1247,27 +1307,48 @@ class PlaybackService : Service() {
         for (tId in secondaryTracks) {
             val cues = cuesForTrackId(tId)
             if (cues.isNotEmpty()) {
-                for (cue in cues) {
-                    if (effectivePos in cue.startMs..cue.endMs) {
-                        val t = cue.text.trim()
-                        if (t.isNotBlank() && t !in activeLines) activeLines.add(t)
-                    }
+                for (line in PlaybackRules.findActiveCueLines(cues, effectivePos)) {
+                    if (line !in activeLines) activeLines.add(line)
                 }
             }
         }
 
         if (secondaryTracks.isEmpty() && selectedSubTracks.isEmpty() && legacyFolderCues.isNotEmpty()) {
-            for (cue in legacyFolderCues) {
-                if (effectivePos in cue.startMs..cue.endMs) {
-                    val t = cue.text.trim()
-                    if (t.isNotBlank() && t !in activeLines) activeLines.add(t)
-                }
+            for (line in PlaybackRules.findActiveCueLines(legacyFolderCues, effectivePos)) {
+                if (line !in activeLines) activeLines.add(line)
             }
         }
 
         val combined = if (activeLines.isEmpty()) null else activeLines.joinToString("\n")
         if (activeSubtitleText.value != combined) {
             activeSubtitleText.value = combined
+        }
+    }
+
+    fun activeSubtitleCues(): List<PlaybackRules.SubtitleCue> {
+        for (tId in selectedSubTracks) {
+            val cues = cuesForTrackId(tId)
+            if (cues.isNotEmpty()) return cues
+        }
+        if (autoSubCues.isNotEmpty()) return autoSubCues
+        if (parsedCues.isNotEmpty()) return parsedCues
+        if (legacyFolderCues.isNotEmpty()) return legacyFolderCues
+        externalCuesBySpuId.values.firstOrNull { it.isNotEmpty() }?.let { return it }
+        embeddedCuesByTrack.values.firstOrNull { it.isNotEmpty() }?.let { return it }
+        return emptyList()
+    }
+
+    fun exportSubtitleShareUri(context: Context, file: java.io.File): Uri? {
+        if (!file.exists()) return null
+        val authority = "${context.packageName}.fileprovider"
+        return runCatching {
+            androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+        }.getOrElse {
+            runCatching {
+                val staged = java.io.File(context.cacheDir, file.name)
+                file.copyTo(staged, overwrite = true)
+                androidx.core.content.FileProvider.getUriForFile(context, authority, staged)
+            }.getOrNull()
         }
     }
 
@@ -1358,12 +1439,16 @@ class PlaybackService : Service() {
         return String(bytes, offset, bytes.size - offset, charset)
     }
 
-    fun startAutoSubtitles(context: Context) {
+    fun startAutoSubtitles(context: Context, translateToEnglish: Boolean = false) {
         val item = state.value.item ?: return
         if (autoSubStatus.value is AutoSubStatus.Processing) return
 
         val groqKey = SpeechToTextClient.activeGroqKey(context)
         val deepgramKey = SpeechToTextClient.activeDeepgramKey(context)
+        if (translateToEnglish && groqKey.isBlank()) {
+            autoSubStatus.value = AutoSubStatus.Error("Add AI Primary key for Direct English mode")
+            return
+        }
         if (groqKey.isBlank() && deepgramKey.isBlank()) {
             autoSubStatus.value = AutoSubStatus.Error("Configure an AI Subtitles API key in Settings or AI Subtitles")
             return
@@ -1375,7 +1460,7 @@ class PlaybackService : Service() {
             lower.contains("english") || Regex("""\b(en|eng)\b""").containsMatchIn(lower)
         }
         val selectedOrdinal = validAudioTracks.indexOfFirst { it.first == state.value.audioTrack }
-        val preferredOrdinal = if (englishOrdinal >= 0) englishOrdinal else selectedOrdinal
+        val preferredOrdinal = if (translateToEnglish) selectedOrdinal else if (englishOrdinal >= 0) englishOrdinal else selectedOrdinal
 
         val targetUri = item.uri
         val targetTitle = item.title
@@ -1389,9 +1474,10 @@ class PlaybackService : Service() {
                     uri = uri,
                     cacheDir = context.cacheDir,
                     preferredAudioOrdinal = preferredOrdinal,
-                    preferEnglishFirst = true,
+                    preferEnglishFirst = !translateToEnglish,
                     groqKey = groqKey,
                     deepgramKey = deepgramKey,
+                    translateToEnglish = translateToEnglish,
                     fallbackChunkProvider = {
                         val fallbackFile = resolveLocalFile(uri)?.takeIf { it.length() <= SpeechToTextClient.MAX_GROQ_CHUNK_BYTES }
                         fallbackFile?.let { SpeechToTextClient.ExtractedChunk(it, 0L, "audio/m4a") }
@@ -1418,7 +1504,13 @@ class PlaybackService : Service() {
                 autoSubStatus.value = AutoSubStatus.Processing("Syncing subtitle timestamps...", 94)
                 val cues = SpeechToTextClient.buildSubtitleCues(result.words)
                 val videoFile = resolveLocalFile(uri)
-                val savedFile = SpeechToTextClient.saveSrtFile(context, targetTitle, cues, videoFile)
+                val savedFile = SpeechToTextClient.saveSrtFile(
+                    context = context,
+                    videoTitle = targetTitle,
+                    cues = cues,
+                    videoFile = videoFile,
+                    langSuffix = if (translateToEnglish) "en" else null,
+                )
                 if (savedFile != null && savedFile.exists()) {
                     Store.prefs(this@PlaybackService).edit().putString("custom_sub_$targetUri", savedFile.absolutePath).apply()
                 }
@@ -1429,7 +1521,7 @@ class PlaybackService : Service() {
                         file = savedFile,
                         count = cues.size,
                         provider = result.provider,
-                        note = null
+                        note = if (translateToEnglish) "Direct English" else null
                     )
                     loadAutoSubCues(cues, userTriggered = !shownPartial.get() || 9999 in selectedSubTracks)
                     android.widget.Toast.makeText(
@@ -1448,6 +1540,79 @@ class PlaybackService : Service() {
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(context, "AI Subtitles error: $cleanErr", android.widget.Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    fun translateActiveSubtitles(context: Context, target: SubtitleTranslator.TargetLanguage) {
+        val item = state.value.item ?: return
+        if (autoSubStatus.value is AutoSubStatus.Processing) return
+        val sourceCues = activeSubtitleCues()
+        if (sourceCues.isEmpty()) {
+            autoSubStatus.value = AutoSubStatus.Error("Load or generate subtitles first")
+            return
+        }
+        val targetUri = item.uri
+        val targetTitle = item.title
+        autoSubStatus.value = AutoSubStatus.Processing("Translating to ${target.label}...", 5)
+        scope.launch(Dispatchers.IO) {
+            val shownPartial = java.util.concurrent.atomic.AtomicBoolean(false)
+            try {
+                val uri = Uri.parse(targetUri)
+                val videoFile = resolveLocalFile(uri)
+                val res = SubtitleTranslator.translateCues(
+                    context = context,
+                    cues = sourceCues,
+                    target = target,
+                    videoTitle = targetTitle,
+                    videoFile = videoFile,
+                    isCancelled = { released || state.value.item?.uri != targetUri },
+                    onProgress = { label, pct ->
+                        if (!released && state.value.item?.uri == targetUri) {
+                            autoSubStatus.value = AutoSubStatus.Processing(label, pct)
+                        }
+                    },
+                    onPartialCues = { liveCues ->
+                        if (liveCues.isNotEmpty() && !released && state.value.item?.uri == targetUri) {
+                            val first = shownPartial.compareAndSet(false, true)
+                            scope.launch(Dispatchers.Main) {
+                                if (!released && state.value.item?.uri == targetUri) {
+                                    loadAutoSubCues(liveCues, userTriggered = first)
+                                }
+                            }
+                        }
+                    },
+                )
+                if (released || state.value.item?.uri != targetUri) return@launch
+                withContext(Dispatchers.Main) {
+                    if (released || state.value.item?.uri != targetUri) return@withContext
+                    val savedFile = res.savedFile
+                    if (savedFile != null && savedFile.exists()) {
+                        rememberImportedSubtitle(targetUri, savedFile.absolutePath)
+                        selectedSubTracks.remove(9999)
+                        addSubtitle(savedFile.absolutePath, selectExtra = true)
+                    } else {
+                        loadAutoSubCues(res.cues, userTriggered = true)
+                    }
+                    autoSubStatus.value = AutoSubStatus.Success(
+                        file = savedFile,
+                        count = res.cues.size,
+                        provider = res.engineLabel,
+                        note = "${target.label} SRT",
+                    )
+                    android.widget.Toast.makeText(
+                        context,
+                        "${target.label} subtitles ready (${res.cues.size})",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                if (released || state.value.item?.uri != targetUri) {
+                    autoSubStatus.value = AutoSubStatus.Idle
+                    return@launch
+                }
+                val cleanErr = SpeechToTextClient.sanitizeErrorMessage(e.message)
+                autoSubStatus.value = AutoSubStatus.Error(cleanErr)
             }
         }
     }
@@ -1527,7 +1692,9 @@ class PlaybackService : Service() {
         activeDescriptor = null
         player.release()
         vlc.release()
-        vlc = createVlc()
+        val initialEffects = AudioEffectSettings.load(this)
+        effectSettings.value = initialEffects
+        vlc = createVlc(initialEffects)
         player = MediaPlayer(vlc)
         audioEffects.apply(player, effectSettings.value)
         applyVolume()

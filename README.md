@@ -1,44 +1,49 @@
 # MS PLAYER
 
-Offline-first, ad-free Android multimedia player built with Kotlin, Jetpack Compose, AndroidLiquidGlass, and LibVLC Android 3.7.7. Current version: **0.6.1**, versionCode **8**, package `app.msplayer.offline`.
+Offline-first, ad-free Android multimedia player built with Kotlin, Jetpack Compose, AndroidLiquidGlass, and LibVLC Android 3.7.7. Current version: **0.6.2**, versionCode **9**, package `app.msplayer.offline`.
+
+By **SRIRAM S & ANTIGRAVITY**.
 
 Primary device target: iQOO Neo10R running Android 16. Minimum Android API 26; compile/target API 36.
 
 ## Download APK
 
-- **Latest Signed ARM64 APK (`v0.6.1`, 64.8 MB)**: [**Download `MS-PLAYER-0.6.1-arm64.apk`**](https://github.com/AWT-SRIRAM/MSPLAYER/raw/main/release/MS-PLAYER-0.6.1-arm64.apk) ([view in `release/`](release/MS-PLAYER-0.6.1-arm64.apk))
-  - SHA-256: `ea3897a20f9cd3c91595c1995791ab2f8617d069e12b95218bcc8266b9f7d100`
+- **Latest Signed ARM64 APK (`v0.6.2`, 64.9 MB)**: [**Download `MS-PLAYER-0.6.2-arm64.apk`**](https://github.com/AWT-SRIRAM/MSPLAYER/raw/main/release/MS-PLAYER-0.6.2-arm64.apk) ([view in `release/`](release/MS-PLAYER-0.6.2-arm64.apk))
+  - SHA-256: `5fa98e1c9145378761d6af218e430808d2b7ef3f73d729f0af9be72ada615ffb`
 - Requires Android 8.0+ (API 26) on ARM64 (`arm64-v8a`).
-- The public APK bundles **no preconfigured API keys** — all local video/audio playback, multi-subtitle tracks, `.srt`/`.zip` subtitles, music player, Liquid Glass UI, gestures, and network streaming work out of the box. For optional AI Subtitles, add your own free key inside `Settings -> API Keys` on the device.
+- The public APK bundles **no preconfigured API keys** — local playback, multi-subtitle tracks, `.srt`/`.zip` subtitles, vertical equalizer & DSP effects, music player, Crystal Liquid Glass UI, gestures, and network streaming work out of the box. For optional Cloud AI Subtitles, Subtitle Translation, and TMDB/Multi-Provider Online Subtitles, add your own free API keys inside `Settings -> API Keys` on the device.
 
 ## Features
 
-- Local video/audio library, folders, dismissible Recently Added row (per-item remove, clear, and Settings restore), playlists, resume playback, video thumbnails, and seek preview thumbnails.
-- Liquid Glass theme (`io.github.kyant0:backdrop:1.0.0`) with live optical refraction, frosted dock pills, Apple iOS-style interactive springs (`iosLiquidPress`), `SharedTransitionLayout` audio mini-player morph, adaptive album-art mood glow, and Android 12+ (`API 31+`) window blur-behind player dialogs (toggleable in Settings).
-- Direct one-tap Aspect Ratio cycling (`Best fit` -> `Crop` -> `Stretch` -> `16:9` -> `4:3` -> `Original`) with frosted HUD indicator.
-- Network URL streaming (`HTTP`, `HTTPS`, `HLS .m3u8`, `DASH .mpd`, `RTSP`, `RTMP`) with clipboard auto-detection, share-sheet `ACTION_SEND` intake, and persistent Recent Streams history.
-- Hardware-first playback with Auto, Hardware, HW+, and Software decoder modes.
-- Simultaneous multi-subtitle selection (unlimited 2, 3, 4, 5+ tracks at once), automatic primary subtitle selection on video open, buffered MKV track demuxing (`file://` and `content://`), `.zip`/`.srt` subtitle import, folder sidecar auto-discovery, pixel-locked single-layout Canvas outline/fill rendering (`StrokeView`), and optional top docking for secondary tracks (OpenSubtitles.org cloud search currently paused via feature flag).
-- Optional AI Subtitles (Speech-to-Text): automatically prioritizes English audio tracks on dual-audio containers, fast-splits compact AAC/Opus audio without re-encoding or compresses multi-channel/heavy codecs to lightweight 16 kHz / 18 kbps Mono AAC chunks (`<= 10 MB`), streams live progressive subtitle cues from Part 1 while remaining parts run in parallel across comma-separated API keys with backup failover, and saves persistent `.srt` subtitles next to your media.
-- Swipe seeking, pinch zoom, left-side brightness and right-side volume gestures, with opposite-side feedback indicators.
-- Hold for 400 ms and drag horizontally for temporary 0.25x–4.0x speed using a compact aligned frosted ruler that smoothly morphs into a compact speed status capsule.
-- Volume gain up to 200%, audio effects, and manual equalizer.
-- Record-style music screen with blurred album-art backdrop, queue, shuffle/repeat, favourites, A-B controls, offline USLT/LRC/text lyrics, and mini-player.
-- Picture-in-picture, optional background audio, and explicit resource cleanup on Exit/task removal.
+- Compact media library dashboard with quick-action bar (`Music`, `Playlists`, `History`, `Stream`, `Open`), dismissible `Recently Added` row, folder badges, playlists, resume playback, thumbnails, and seek preview thumbnails.
+- Apple iOS-inspired Crystal Liquid Glass theme (`io.github.kyant0:backdrop:1.0.0`) with live optical refraction, frosted popup menus, floating dock pills, `iosLiquidPress` spring feedback, `SharedTransitionLayout` audio mini-player morph, adaptive album-art glow, and API 31+ window blur-behind player sheets & dialogs (toggleable in Settings).
+- Online Subtitles engine: automatic Filename/Year/`SxxExx` parsing, **TMDB** movie & series normalization, and concurrent multi-provider search & archive extraction across **OpenSubtitles** (with 64-bit moviehash matching), **SubDL**, **SubSource**, and **Wyzie Subs**.
+- Cloud AI Subtitles & Translation: speech-to-text pipeline (`Original speech` and `Speech -> English`) with English track prioritization, lightweight 16 kHz / 18 kbps Mono AAC chunking, live streaming Part-1 preview, ID-locked batch cloud translation (`English` & `Tamil`), and 1-tap `Share .srt` export.
+- Multi-subtitle playback (unlimited simultaneous tracks), `.zip`/`.srt` auto-discovery & import, instant post-seek cue sync, `StrokeView` outline/fill rendering, and optional top docking for secondary tracks.
+- Temporary 0.25x–4.0x speed capsule (8 stops: `0.25x`, `0.5x`, `1.0x`, `1.5x`, `2.0x`, `2.5x`, `3.0x`, `4.0x`) on 400 ms long-press drag, plus direct speed picker, swipe seeking, pinch zoom, and opposite-side brightness/volume HUDs.
+- Studio audio panel with 5-band & 10-band Vertical Equalizer faders, quick preset strip, `Reverb` presets, rotary `Bass Boost` & `Virtualizer` knobs, and 200% volume gain.
+- Network URL streaming (`HTTP`, `HTTPS`, `HLS .m3u8`, `DASH .mpd`, `RTSP`, `RTMP`) with clipboard detection, `ACTION_SEND` intake, hardware-first (`Auto` / `HW` / `HW+` / `SW`) decoders, Picture-in-Picture, and background audio.
 
-No tracking or advertising services are included (`android.permission.INTERNET` is used only if you trigger AI Subtitles or open a network stream URL). The interface was developed using user-supplied MX Player references; this is an independent implementation and is not affiliated with MX Player.
+No tracking or advertising services are included (`android.permission.INTERNET` is used only when triggering Online Subtitles, AI Subtitles / Translation, or streaming a network URL). This is an independent multimedia player implementation and is not affiliated with MX Player or VLC.
 
 ## Build
 
 Install JDK 17 and Android SDK API 36 with Build Tools 36.0.0. Configure `JAVA_HOME` and `ANDROID_HOME`, or provide an untracked `local.properties` with `sdk.dir=<SDK path>`. Gradle requires Internet access on the build computer to resolve dependencies.
 
-Optional API keys can be entered inside `Settings -> API Keys` on the device, or supplied at build time in your untracked `local.properties` (never committed to git):
+Optional API keys can be entered inside `Settings -> API Keys` on the device, or supplied for private builds in your untracked `local.properties` (never committed to git):
 
 ```properties
 sdk.dir=C:\\path\\to\\Android\\Sdk
 MSPLAYER_GROQ_KEY=
 MSPLAYER_DEEPGRAM_KEY=
+MSPLAYER_OPENSUBTITLES_KEY=
+MSPLAYER_SUBDL_KEY=
+MSPLAYER_SUBSOURCE_KEY=
+MSPLAYER_WYZIE_KEY=
+MSPLAYER_TMDB_KEY=
 ```
+
+Pass `-PpublicRelease=true` to strip all `local.properties` API keys from `BuildConfig` when building public APKs.
 
 ```powershell
 .\gradlew.bat assembleDebug testDebugUnitTest lintDebug
