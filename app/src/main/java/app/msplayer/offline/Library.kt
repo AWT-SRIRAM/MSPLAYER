@@ -40,6 +40,67 @@ data class MediaItem(
     val modified: Long = 0,
 )
 
+object LibraryCache {
+    private const val CACHE_FILE = "media_library_cache_v1.json"
+
+    fun load(context: Context): Pair<List<MediaItem>, List<MediaItem>> = runCatching {
+        val file = java.io.File(context.filesDir, CACHE_FILE)
+        if (!file.exists() || !file.canRead() || file.length() < 10) return Pair(emptyList(), emptyList())
+        val json = org.json.JSONObject(file.readText())
+        val vArr = json.optJSONArray("videos") ?: org.json.JSONArray()
+        val aArr = json.optJSONArray("audios") ?: org.json.JSONArray()
+        fun parse(arr: org.json.JSONArray, audio: Boolean): List<MediaItem> {
+            val list = ArrayList<MediaItem>(arr.length())
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                list.add(
+                    MediaItem(
+                        uri = o.getString("uri"),
+                        title = o.getString("title"),
+                        folder = o.optString("folder", "Storage"),
+                        size = o.optLong("size", 0L),
+                        duration = o.optLong("duration", 0L),
+                        width = o.optInt("width", 0),
+                        height = o.optInt("height", 0),
+                        added = o.optLong("added", 0L),
+                        audio = audio,
+                        modified = o.optLong("modified", 0L),
+                    )
+                )
+            }
+            return list
+        }
+        Pair(parse(vArr, false), parse(aArr, true))
+    }.getOrDefault(Pair(emptyList(), emptyList()))
+
+    fun save(context: Context, videos: List<MediaItem>, audios: List<MediaItem>) {
+        runCatching {
+            val file = java.io.File(context.filesDir, CACHE_FILE)
+            val json = org.json.JSONObject()
+            fun toJson(items: List<MediaItem>): org.json.JSONArray {
+                val arr = org.json.JSONArray()
+                for (it in items) {
+                    val o = org.json.JSONObject()
+                    o.put("uri", it.uri)
+                    o.put("title", it.title)
+                    o.put("folder", it.folder)
+                    o.put("size", it.size)
+                    o.put("duration", it.duration)
+                    o.put("width", it.width)
+                    o.put("height", it.height)
+                    o.put("added", it.added)
+                    o.put("modified", it.modified)
+                    arr.put(o)
+                }
+                return arr
+            }
+            json.put("videos", toJson(videos.take(2000)))
+            json.put("audios", toJson(audios.take(2000)))
+            file.writeText(json.toString())
+        }
+    }
+}
+
 data class MediaFolder(val name: String, val items: List<MediaItem>) {
     val size
         get() = items.sumOf { it.size }

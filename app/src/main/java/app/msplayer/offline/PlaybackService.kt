@@ -1625,10 +1625,11 @@ class PlaybackService : Service() {
             if (id in selectedSubTracks) {
                 selectedSubTracks.remove(id)
             } else {
+                selectedSubTracks.clear() // Single-track exclusive selection
                 selectedSubTracks.add(id)
             }
         }
-        syncSubtitleTracks(name, persistName = id >= 0 && selectedSubTracks.size == 1)
+        syncSubtitleTracks(name, persistName = id >= 0)
     }
 
     fun subtitleTrack(id: Int, name: String) {

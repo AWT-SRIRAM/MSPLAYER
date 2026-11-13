@@ -24,8 +24,8 @@ android {
         applicationId = "app.msplayer.offline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.6.7"
+        versionCode = 15
+        versionName = "0.6.8"
         ndk { abiFilters += (project.findProperty("testAbi")?.toString() ?: "arm64-v8a") }
         testInstrumentationRunner = "app.msplayer.offline.SafeTestRunner"
         manifestPlaceholders["appLabel"] = "MS PLAYER"

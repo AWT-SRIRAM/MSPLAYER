@@ -22,6 +22,11 @@ data class AudioEffectSettings(
         "Classical" -> listOf(4f, 3f, 2f, 1f, -1f, -1f, 0f, 2f, 3f, 4f)
         "Dance" -> listOf(5f, 4f, 1f, 0f, 0f, -2f, 2f, 3f, 4f, 3f)
         "Rock" -> listOf(4f, 3f, 2f, 1f, -1f, -1f, 1f, 3f, 4f, 4f)
+        "Headphones" -> listOf(4.8f, 11.2f, 5.6f, -3.2f, -2.4f, 1.6f, 4.8f, 9.6f, 12.8f, 14.4f)
+        "Earbuds Vocal" -> listOf(-3f, -2f, -1f, 1.5f, 3.5f, 4.5f, 3.5f, 2f, 1f, 0f)
+        "Deep Bass" -> listOf(6f, 5f, 3.5f, 1.5f, 0f, -1f, 0f, 1f, 1f, 1f)
+        "Cinematic Spatial" -> listOf(2f, 1f, 0f, -1f, 0f, 1.5f, 2f, 3f, 4.5f, 4.5f)
+        "Night Mode" -> listOf(-2f, -1f, 0f, 2f, 3f, 3.5f, 2f, 0f, -2f, -4f)
         "Custom" -> List(10) { bands.getOrElse(it) { 0f }.coerceIn(-12f, 12f) }
         else -> List(10) { 0f } // "Original", "Normal", "Flat"
     }
@@ -111,7 +116,8 @@ data class AudioEffectSettings(
 
     companion object {
         val presets = listOf(
-            "Original", "Clarity", "Bass Boost", "Treble Boost",
+            "Original", "Clarity", "Headphones", "Earbuds Vocal", "Deep Bass",
+            "Cinematic Spatial", "Night Mode", "Bass Boost", "Treble Boost",
             "Movie", "Music", "Normal", "Classical", "Dance", "Flat", "Rock"
         )
         val reverbPresets = listOf(

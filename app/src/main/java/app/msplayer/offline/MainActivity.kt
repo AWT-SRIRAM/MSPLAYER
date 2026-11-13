@@ -424,6 +424,9 @@ class MainActivity : ComponentActivity() {
         GlassTheme.init(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         enableHighRefreshRate()
+        val (cachedV, cachedA) = LibraryCache.load(this)
+        if (cachedV.isNotEmpty()) videos = cachedV
+        if (cachedA.isNotEmpty()) audios = cachedA
         showPlayer =
             savedInstanceState?.getBoolean("player") ?: intent.getBooleanExtra("show_player", false)
         extractIncomingMedia(intent)
@@ -550,7 +553,7 @@ class MainActivity : ComponentActivity() {
         if (service?.requiresAllFilesPermission?.value == true && nowAllFiles) {
             service?.retryCurrent()
         }
-        if (wasRestricted || nowAllFiles != wasAllFilesGranted) reload(forceScan = nowAllFiles != wasAllFilesGranted)
+        if (nowAllFiles != wasAllFilesGranted) reload(forceScan = true)
         wasRestricted = !hasLibraryPermission()
         wasAllFilesGranted = nowAllFiles
         immersive(showPlayer)
@@ -723,10 +726,11 @@ class MainActivity : ComponentActivity() {
         ) == PackageManager.PERMISSION_GRANTED || hasAllFilesAccess()
 
     fun reload(forceScan: Boolean = false) {
+        if (!forceScan && scanJob?.isActive == true) return
         scanJob?.cancel()
         scanJob =
             lifecycleScope.launch {
-                scanning = true
+                if (videos.isEmpty()) scanning = true
                 libraryError = null
                 try {
                     if (forceScan) {
@@ -739,8 +743,11 @@ class MainActivity : ComponentActivity() {
                     val a = Library.scan(this@MainActivity, true, forceFull = forceScan)
                     val tree = Store.prefs(this@MainActivity).getString("tree", null)
                     val extra = if (tree != null) scanTree(Uri.parse(tree)) else emptyList()
-                    videos = (v + extra.filter { !it.audio }).distinctBy { it.uri }
-                    audios = (a + extra.filter { it.audio }).distinctBy { it.uri }
+                    val newVideos = (v + extra.filter { !it.audio }).distinctBy { it.uri }
+                    val newAudios = (a + extra.filter { it.audio }).distinctBy { it.uri }
+                    videos = newVideos
+                    audios = newAudios
+                    LibraryCache.save(this@MainActivity, newVideos, newAudios)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -3657,45 +3664,83 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                 Text("Audio playback", color = Muted)
             }
         if (!activity.inPip) {
-            Box(Modifier.fillMaxSize().videoGestures(
-                activity, service, locked, menu == null && !activity.inPip,
-                aspectOption.label, zoom, { zoom = it }, {
-                    if (!service.state.value.playing) {
-                        if (!controls) {
-                            controls = true
+            var showUnlockPrompt by remember { mutableStateOf(false) }
+            var unlockTimerJob by remember { mutableStateOf<Job?>(null) }
+            val lockTapSrc = remember { MutableInteractionSource() }
+            Box(
+                Modifier.fillMaxSize()
+                    .then(
+                        if (locked) {
+                            Modifier.clickable(
+                                interactionSource = lockTapSrc,
+                                indication = null,
+                            ) {
+                                showUnlockPrompt = true
+                                unlockTimerJob?.cancel()
+                                unlockTimerJob = scope.launch {
+                                    delay(2800L)
+                                    showUnlockPrompt = false
+                                }
+                            }
                         } else {
-                            service.play()
+                            Modifier.videoGestures(
+                                activity, service, locked, menu == null && !activity.inPip,
+                                aspectOption.label, zoom, { zoom = it }, {
+                                    if (!service.state.value.playing) {
+                                        if (!controls) {
+                                            controls = true
+                                        } else {
+                                            service.play()
+                                        }
+                                    } else {
+                                        controls = !controls
+                                    }
+                                    touched = SystemClock.uptimeMillis()
+                                }, { dragPosition = it }, { value ->
+                                    feedbackJob?.cancel()
+                                    feedback = value
+                                    if (value != null && value !is PlayerFeedback.Speed) {
+                                        feedbackJob = scope.launch {
+                                            delay(if (value is PlayerFeedback.Seek) 1100L else 700L)
+                                            feedback = null
+                                        }
+                                    }
+                                }
+                            )
                         }
-                    } else {
-                        controls = !controls
-                    }
-                    touched = SystemClock.uptimeMillis()
-                }, { dragPosition = it }, { value ->
-                    feedbackJob?.cancel()
-                    feedback = value
-                    if (value != null && value !is PlayerFeedback.Speed) {
-                        feedbackJob = scope.launch {
-                            delay(if (value is PlayerFeedback.Seek) 1100L else 700L)
-                            feedback = null
-                        }
-                    }
-                }))
-            if (locked) {
+                    )
+            )
+            AnimatedVisibility(
+                visible = locked && showUnlockPrompt,
+                enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.85f),
+                exit = fadeOut(tween(220)) + scaleOut(tween(220), targetScale = 0.85f),
+                modifier = Modifier.align(Alignment.CenterStart).safeDrawingPadding().padding(start = 24.dp),
+            ) {
                 val unlockSrc = remember { MutableInteractionSource() }
-                IconButton(
-                    onClick = {
-                        locked = false
-                        touch()
-                    },
-                    interactionSource = unlockSrc,
-                    modifier =
-                        Modifier.align(Alignment.BottomStart)
-                            .safeDrawingPadding()
-                            .padding(20.dp)
-                            .iosLiquidPress(unlockSrc, scaleDown = 0.88f)
-                            .background(Color.Black.copy(alpha = .6f), CircleShape),
+                val haptics = LocalHapticFeedback.current
+                Row(
+                    modifier = Modifier
+                        .iosLiquidPress(unlockSrc, scaleDown = 0.90f)
+                        .frostedGlassChrome(
+                            enabled = glassEnabled,
+                            shape = RoundedCornerShape(50),
+                            tint = Color(0xDE0B121D),
+                            fallbackColor = Color.Black.copy(alpha = 0.75f),
+                            borderWidth = 1.dp,
+                            fallbackBorderColor = Color.White.copy(alpha = 0.30f),
+                        )
+                        .clickable(interactionSource = unlockSrc, indication = ripple()) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            locked = false
+                            showUnlockPrompt = false
+                            touch()
+                        }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Default.Lock, "Unlock controls", tint = Color.White)
+                    Icon(Icons.Default.Lock, "Unlock", tint = Cyan, modifier = Modifier.size(20.dp))
+                    Text("Tap to Unlock", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             AnimatedVisibility(
@@ -4091,9 +4136,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Spacer(Modifier.width(10.dp))
                             Text("Open (.srt / .zip)")
                         }
-                        if (state.selectedSubtitleTracks.size > 1) {
-                            Badge("${state.selectedSubtitleTracks.size} active", color = Color(0xFF1976D2))
-                        }
+
                     }
                     val validSubs = state.subtitles.filter { it.first >= 0 }
                     val favLangs = remember(menu) { Store.favoriteSubtitleLanguages(context) }
@@ -4201,32 +4244,6 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Text("Instant Sync (Heard Line Now)")
                         }
                         TextButton(onClick = { openPlayerMenu("Subtitle appearance") }) { Text("Appearance") }
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    val updated = subtitleStyle.copy(secondaryTop = !subtitleStyle.secondaryTop)
-                                    subtitleStyle = updated
-                                    service.subtitleStyle(updated)
-                                }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                checked = subtitleStyle.secondaryTop,
-                                onCheckedChange = { checked ->
-                                    val updated = subtitleStyle.copy(secondaryTop = checked)
-                                    subtitleStyle = updated
-                                    service.subtitleStyle(updated)
-                                },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = Color(0xFF2196F3),
-                                    uncheckedColor = Color.White.copy(alpha = 0.6f),
-                                ),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("Top dock (2nd sub)", color = Color.White, fontSize = 14.sp)
-                        }
                     }
                 }
                 "Audio effects" -> AudioEffectsControls(service)
@@ -5786,19 +5803,7 @@ fun TranslateSubtitlesDialog(
                                 )
                             }
 
-                            Text("Display Mode", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(
-                                    selected = !dualMode,
-                                    onClick = { dualMode = false },
-                                    label = { Text("Replace track", fontSize = 12.sp) },
-                                )
-                                FilterChip(
-                                    selected = dualMode,
-                                    onClick = { dualMode = true },
-                                    label = { Text("Dual subtitles", fontSize = 12.sp) },
-                                )
-                            }
+
                         }
 
                         when (val currentStatus = subStatus) {

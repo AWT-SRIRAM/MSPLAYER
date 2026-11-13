@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Movie
@@ -628,9 +629,11 @@ fun AudioEffectsControls(service: PlaybackService) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
                                 when (name) {
-                                    "Clarity" -> Icons.Default.Mic
-                                    "Bass Boost" -> Icons.Default.Speaker
-                                    "Treble Boost" -> Icons.Default.SurroundSound
+                                    "Clarity", "Earbuds Vocal" -> Icons.Default.Mic
+                                    "Bass Boost", "Deep Bass" -> Icons.Default.Speaker
+                                    "Treble Boost", "Cinematic Spatial" -> Icons.Default.SurroundSound
+                                    "Headphones" -> Icons.Default.Headphones
+                                    "Night Mode" -> Icons.Default.Brightness6
                                     "Movie" -> Icons.Default.Movie
                                     "Music" -> Icons.Default.MusicNote
                                     else -> Icons.Default.GraphicEq
@@ -1131,202 +1134,59 @@ fun ImmersivePlayerDialog() {
 @Composable
 fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifier) {
     val glassEnabled by rememberGlassEnabled()
-    val animatedFraction by animateFloatAsState(
-        targetValue = GestureRules.fraction(rate),
-        animationSpec = MotionSpec.PressSpring,
-        label = "speedFraction",
-    )
-
-    var expanded by remember { mutableStateOf(true) }
-    LaunchedEffect(rate, changedAt) {
-        expanded = true
-        delay(1300L)
-        expanded = false
-    }
-
     val rateText = if ((rate * 100).roundToInt() % 50 == 0) {
         String.format(java.util.Locale.ROOT, "%.1f", rate)
     } else {
         String.format(java.util.Locale.ROOT, "%.2f", rate)
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-            .padding(top = 14.dp, start = 16.dp, end = 16.dp),
+            .padding(top = 16.dp),
         contentAlignment = Alignment.TopCenter,
     ) {
-        val capsuleWidth = (maxWidth * 0.78f).coerceIn(248.dp, 316.dp)
-        val capsuleShape = RoundedCornerShape(if (expanded) 22.dp else 50.dp)
-        Box(
+        Row(
             modifier = Modifier
-                .animateContentSize(
-                    animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
-                )
-                .then(if (expanded) Modifier.width(capsuleWidth) else Modifier.wrapContentWidth())
                 .frostedGlassChrome(
                     enabled = glassEnabled,
-                    shape = capsuleShape,
-                    tint = Color(0xBC08111D),
+                    shape = RoundedCornerShape(50),
+                    tint = Color(0xCC09121E),
                     fallbackColor = Color(0xDE0B121D),
                     borderWidth = 1.dp,
-                    fallbackBorderColor = Color.White.copy(alpha = 0.16f),
+                    fallbackBorderColor = Color.White.copy(alpha = 0.20f),
                 )
-                .padding(
-                    horizontal = if (expanded) 14.dp else 16.dp,
-                    vertical = if (expanded) 10.dp else 8.dp,
-                ),
+                .padding(horizontal = 16.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (!expanded) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.35f), Cyan.copy(alpha = 0.25f)))),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            if (rate > 1f) Icons.Default.FastForward else Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = Cyan,
-                            modifier = Modifier.size(13.dp),
-                        )
-                    }
-                    Text(
-                        text = "${rateText}×",
-                        color = Color.White,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = "Speed",
-                        color = Color.White.copy(alpha = 0.72f),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                    )
-                }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(CircleShape)
-                                    .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.42f), Cyan.copy(alpha = 0.30f)))),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    if (rate > 1f) Icons.Default.FastForward else Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                            }
-                            Text(
-                                text = "${rateText}×",
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color.White.copy(alpha = 0.08f))
-                                .border(0.6.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(50))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                        ) {
-                            Text(
-                                text = "SLIDE TO ADJUST",
-                                color = Color.White.copy(alpha = 0.72f),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(14.dp),
-                    ) {
-                        val y = size.height / 2f
-                        val trackH = 5.dp.toPx()
-                        val trackTop = y - trackH / 2f
-                        val frac = animatedFraction.coerceIn(0f, 1f)
-                        drawRoundRect(
-                            color = Color.White.copy(alpha = 0.16f),
-                            topLeft = Offset(0f, trackTop),
-                            size = Size(size.width, trackH),
-                            cornerRadius = CornerRadius(trackH / 2f, trackH / 2f),
-                        )
-                        val fillW = (size.width * frac).coerceAtLeast(trackH)
-                        drawRoundRect(
-                            brush = Brush.horizontalGradient(listOf(Accent, Cyan)),
-                            topLeft = Offset(0f, trackTop),
-                            size = Size(fillW, trackH),
-                            cornerRadius = CornerRadius(trackH / 2f, trackH / 2f),
-                        )
-                        GestureRules.rulerStops.forEach { stop ->
-                            val cx = size.width * GestureRules.fraction(stop)
-                            drawCircle(
-                                color = Color.White.copy(alpha = if (GestureRules.fraction(stop) <= frac) 0.9f else 0.35f),
-                                radius = 1.4.dp.toPx(),
-                                center = Offset(cx, y),
-                            )
-                        }
-                        val thumbX = (size.width * frac).coerceIn(5.dp.toPx(), size.width - 5.dp.toPx())
-                        drawCircle(
-                            color = Cyan.copy(alpha = 0.36f),
-                            radius = 7.dp.toPx(),
-                            center = Offset(thumbX, y),
-                        )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 4.6.dp.toPx(),
-                            center = Offset(thumbX, y),
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val anchorStops = listOf(0.25f to "0.25×", 1f to "1×", 2f to "2×", 3f to "3×", 4f to "4×")
-                        anchorStops.forEach { (stopVal, label) ->
-                            val isActive = kotlin.math.abs(stopVal - rate) < 0.25f
-                            Text(
-                                text = label,
-                                color = if (isActive) Cyan else Color.White.copy(alpha = 0.56f),
-                                fontSize = if (isActive) 10.5.sp else 9.5.sp,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                            )
-                        }
-                    }
-                }
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.45f), Cyan.copy(alpha = 0.35f)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (rate > 1f) Icons.Default.FastForward else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Cyan,
+                    modifier = Modifier.size(13.dp),
+                )
             }
+            Text(
+                text = "${rateText}×",
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Speed",
+                color = Color.White.copy(alpha = 0.75f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
         }
     }
 }
