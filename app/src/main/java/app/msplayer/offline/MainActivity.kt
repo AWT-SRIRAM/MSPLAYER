@@ -487,13 +487,25 @@ class MainActivity : ComponentActivity() {
             pendingUri = incoming.data
             return
         }
-        if (incoming.action == Intent.ACTION_SEND && incoming.type == "text/plain") {
-            val shared = incoming.getStringExtra(Intent.EXTRA_TEXT) ?: return
-            val normalized = PlaybackRules.normalizeStreamUrl(shared)
-            if (PlaybackRules.isStreamUrl(normalized)) {
-                pendingUri = Uri.parse(normalized)
+        if (incoming.action == Intent.ACTION_SEND) {
+            @Suppress("DEPRECATION")
+            val streamUri = if (Build.VERSION.SDK_INT >= 33) {
+                incoming.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
-                pendingStreamPrompt = shared.trim()
+                incoming.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+            if (streamUri != null) {
+                pendingUri = streamUri
+                return
+            }
+            if (incoming.type == "text/plain" || incoming.hasExtra(Intent.EXTRA_TEXT)) {
+                val shared = incoming.getStringExtra(Intent.EXTRA_TEXT) ?: return
+                val normalized = PlaybackRules.normalizeStreamUrl(shared)
+                if (PlaybackRules.isStreamUrl(normalized)) {
+                    pendingUri = Uri.parse(normalized)
+                } else {
+                    pendingStreamPrompt = shared.trim()
+                }
             }
         }
     }
@@ -502,14 +514,23 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val uriData = intent.data ?: run {
-            if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain") {
-                val shared = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
-                val normalized = PlaybackRules.normalizeStreamUrl(shared)
-                if (PlaybackRules.isStreamUrl(normalized)) Uri.parse(normalized)
-                else {
-                    pendingStreamPrompt = shared.trim()
-                    null
+            if (intent.action == Intent.ACTION_SEND) {
+                @Suppress("DEPRECATION")
+                val streamUri = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
                 }
+                if (streamUri != null) return@run streamUri
+                if (intent.type == "text/plain" || intent.hasExtra(Intent.EXTRA_TEXT)) {
+                    val shared = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+                    val normalized = PlaybackRules.normalizeStreamUrl(shared)
+                    if (PlaybackRules.isStreamUrl(normalized)) Uri.parse(normalized)
+                    else {
+                        pendingStreamPrompt = shared.trim()
+                        null
+                    }
+                } else null
             } else null
         }
         if (uriData != null) {

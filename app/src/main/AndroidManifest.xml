@@ -23,12 +23,43 @@
                 <data android:mimeType="video/*" /><data android:mimeType="audio/*" />
             </intent-filter>
             <intent-filter>
-                <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" /><data android:mimeType="application/octet-stream" />
+                <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" /><data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-matroska" />
+                <data android:mimeType="application/mp4" />
+                <data android:mimeType="application/ogg" />
             </intent-filter>
             <intent-filter>
-                <action android:name="android.intent.action.SEND" /><category android:name="android.intent.category.DEFAULT" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\.mp4" />
+                <data android:pathPattern=".*\.mkv" />
+                <data android:pathPattern=".*\.avi" />
+                <data android:pathPattern=".*\.mov" />
+                <data android:pathPattern=".*\.webm" />
+                <data android:pathPattern=".*\.flv" />
+                <data android:pathPattern=".*\.ts" />
+                <data android:pathPattern=".*\.wmv" />
+                <data android:pathPattern=".*\.pending.*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
             </intent-filter>
         </activity>
         <service android:name=".PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
