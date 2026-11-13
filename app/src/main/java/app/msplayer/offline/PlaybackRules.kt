@@ -77,13 +77,44 @@ object PlaybackRules {
 
     fun temporaryFile(name: String): Boolean {
         val n = name.lowercase(java.util.Locale.ROOT)
-        return n.startsWith(".pending") || n.endsWith(".pending") || n.endsWith(".part") || n.endsWith(".crdownload")
+        return n.startsWith(".pending") ||
+            n.endsWith(".pending") ||
+            n.endsWith(".part") ||
+            n.endsWith(".crdownload") ||
+            n.contains(".pending-")
     }
 
-    private fun mediaExtension(name: String): String {
+    fun mediaExtension(name: String): String {
         var n = name.lowercase(java.util.Locale.ROOT)
-        for (suffix in listOf(".pending", ".part", ".crdownload")) if (n.endsWith(suffix)) n = n.removeSuffix(suffix)
+        val pendingTail = Regex("""\.pending(?:-\d+)?$""")
+        while (true) {
+            val trimmed = when {
+                pendingTail.containsMatchIn(n) -> n.replace(pendingTail, "")
+                n.endsWith(".part") -> n.removeSuffix(".part")
+                n.endsWith(".crdownload") -> n.removeSuffix(".crdownload")
+                n.endsWith(".tmp") -> n.removeSuffix(".tmp")
+                else -> n
+            }
+            if (trimmed == n) break
+            n = trimmed
+        }
         return n.substringAfterLast('.', "")
+    }
+
+    fun containerExtensionHint(name: String, sniffedMime: String? = null): String {
+        val ext = mediaExtension(name)
+        if (ext in videoExtensions || ext in audioExtensions) return ext
+        return when (sniffedMime?.lowercase(java.util.Locale.ROOT)) {
+            "video/x-matroska" -> "mkv"
+            "video/webm" -> "webm"
+            "video/mp4", "video/m4v" -> "mp4"
+            "video/quicktime" -> "mov"
+            "video/x-msvideo" -> "avi"
+            "audio/flac" -> "flac"
+            "audio/wav" -> "wav"
+            "audio/mpeg" -> "mp3"
+            else -> ext
+        }
     }
 
     /** Small signature probe for temporary names with no usable MIME or suffix. */
@@ -114,6 +145,10 @@ object PlaybackRules {
 
     fun fourcc(value: Int): String =
         (0..3).map { ((value ushr (it * 8)) and 255).toChar() }.joinToString("").trim()
+
+    /** Position to jump back to when A-B repeat reaches point B, or null while still inside the loop. */
+    fun abLoopTarget(position: Long, a: Long?, b: Long?): Long? =
+        if (b != null && position >= b) (a ?: 0L) else null
 
     fun safeSeek(position: Long, duration: Long): Long =
         position.coerceIn(0, duration.coerceAtLeast(0))
@@ -150,7 +185,7 @@ object PlaybackRules {
         val cues = ArrayList<SubtitleCue>()
         val lines = raw.lines()
         var i = 0
-        val timeRegex = Regex("""(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})""")
+        val timeRegex = Regex("""(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{3})""")
         val ssaRegex = Regex("""^Dialogue:\s*\d+,(\d+):(\d{2}):(\d{2})\.(\d{2}),(\d+):(\d{2}):(\d{2})\.(\d{2}),[^,]*?,[^,]*?,[^,]*?,[^,]*?,[^,]*?,[^,]*?,(.*)$""")
 
         while (i < lines.size) {
@@ -158,8 +193,8 @@ object PlaybackRules {
             val match = timeRegex.find(line)
             if (match != null) {
                 val (h1, m1, s1, ms1, h2, m2, s2, ms2) = match.destructured
-                val startMs = h1.toLong() * 3600000L + m1.toLong() * 60000L + s1.toLong() * 1000L + ms1.toLong()
-                val endMs = h2.toLong() * 3600000L + m2.toLong() * 60000L + s2.toLong() * 1000L + ms2.toLong()
+                val startMs = (h1.toLongOrNull() ?: 0L) * 3600000L + m1.toLong() * 60000L + s1.toLong() * 1000L + ms1.toLong()
+                val endMs = (h2.toLongOrNull() ?: 0L) * 3600000L + m2.toLong() * 60000L + s2.toLong() * 1000L + ms2.toLong()
                 i++
                 val textBuilder = StringBuilder()
                 while (i < lines.size && lines[i].trim().isNotEmpty()) {
@@ -290,13 +325,15 @@ object PlaybackRules {
 
     /**
      * Picks the primary subtitle track from available (id, label) pairs.
-     * Prefers an exact [preferredName] match when present; otherwise selects the best
-     * full-dialogue track (prioritizing English full dialogue over forced/signs-only tracks
-     * while preserving original track order on ties).
+     * Prefers an exact [preferredName] match when present, then [starredTracks],
+     * then ordered [favoriteLanguages] (defaulting to English full dialogue over
+     * forced/signs-only tracks while preserving original track order on ties).
      */
     fun choosePrimarySubtitle(
         tracks: List<Pair<Int, String>>,
         preferredName: String? = null,
+        favoriteLanguages: List<String> = emptyList(),
+        starredTracks: Set<String> = emptySet(),
     ): Pair<Int, String>? {
         val valid = tracks.filter { it.first >= 0 }
         if (valid.isEmpty()) return null
@@ -306,24 +343,164 @@ object PlaybackRules {
             valid.firstOrNull { it.second.equals(pref, ignoreCase = true) }?.let { return it }
         }
 
+        val normalizedStars = starredTracks.map { it.trim().lowercase(java.util.Locale.ROOT) }.filter { it.isNotBlank() }.toSet()
+        val favs = favoriteLanguages.map { it.trim().lowercase(java.util.Locale.ROOT) }.filter { it.isNotBlank() }.distinct()
+
         return valid.withIndex()
             .maxWithOrNull(
                 compareBy<IndexedValue<Pair<Int, String>>> { (_, entry) ->
                     val lower = entry.second.lowercase(java.util.Locale.ROOT)
+                    val trimmedLower = lower.trim()
                     val isForcedOrSigns =
                         lower.contains("forced") ||
                             lower.contains("signs") ||
                             lower.contains("songs") ||
                             lower.contains("karaoke")
-                    val isEnglish =
-                        lower.contains("english") ||
-                            Regex("""(?:^|[^a-z])(en|eng)(?:[^a-z]|$)""").containsMatchIn(lower)
                     var score = 0
                     if (isForcedOrSigns) score -= 100
-                    if (isEnglish) score += 20
+                    if (trimmedLower in normalizedStars || normalizedStars.any { star -> trimmedLower.contains(star) }) {
+                        score += 500
+                    }
+                    if (favs.isNotEmpty()) {
+                        val favIndex = favs.indexOfFirst { code -> SubtitleTranslator.matchesLanguage(lower, code) }
+                        if (favIndex >= 0) {
+                            score += 30 + (favs.size - favIndex) * 50
+                        }
+                    } else {
+                        val isEnglish =
+                            lower.contains("english") ||
+                                Regex("""(?:^|[^a-z])(en|eng)(?:[^a-z]|$)""").containsMatchIn(lower)
+                        if (isEnglish) score += 20
+                    }
                     score
                 }.thenByDescending { it.index }
             )
             ?.value
+    }
+
+    /**
+     * Picks the primary audio track from available (id, label) pairs.
+     * Prefers an exact [preferredName] match when present, then ordered [favoriteLanguages]
+     * (via ISO codes/aliases), deprioritizing commentary/descriptive tracks on ties.
+     */
+    fun choosePrimaryAudio(
+        tracks: List<Pair<Int, String>>,
+        preferredName: String? = null,
+        favoriteLanguages: List<String> = emptyList(),
+    ): Pair<Int, String>? {
+        val valid = tracks.filter { it.first >= 0 }
+        if (valid.isEmpty()) return null
+
+        val pref = preferredName?.trim()?.takeIf { it.isNotEmpty() }
+        if (pref != null) {
+            valid.firstOrNull { it.second.equals(pref, ignoreCase = true) }?.let { return it }
+        }
+
+        val favs = favoriteLanguages.map { it.trim().lowercase(java.util.Locale.ROOT) }.filter { it.isNotBlank() }.distinct()
+        if (favs.isEmpty()) return null
+
+        return valid.withIndex()
+            .filter { (_, entry) ->
+                val lower = entry.second.lowercase(java.util.Locale.ROOT)
+                favs.any { code -> SubtitleTranslator.matchesLanguage(lower, code) }
+            }
+            .maxWithOrNull(
+                compareBy<IndexedValue<Pair<Int, String>>> { (_, entry) ->
+                    val lower = entry.second.lowercase(java.util.Locale.ROOT)
+                    val isSecondaryMix =
+                        lower.contains("commentary") ||
+                            lower.contains("director") ||
+                            lower.contains("audio description")
+                    val favIndex = favs.indexOfFirst { code -> SubtitleTranslator.matchesLanguage(lower, code) }
+                    var score = if (favIndex >= 0) 30 + (favs.size - favIndex) * 50 else 0
+                    if (isSecondaryMix) score -= 40
+                    score
+                }.thenByDescending { it.index }
+            )
+            ?.value
+    }
+
+    enum class TapZone { LEFT, CENTER, RIGHT }
+
+    enum class TapAction { NONE, SEEK_BACK, TOGGLE_PLAY_PAUSE, SEEK_FORWARD }
+
+    fun tapZoneForFraction(xFraction: Float): TapZone = when {
+        xFraction < 0.36f -> TapZone.LEFT
+        xFraction > 0.64f -> TapZone.RIGHT
+        else -> TapZone.CENTER
+    }
+
+    data class TapSeekBurst(
+        val side: Int = 0, // -1 left, +1 right, 0 inactive
+        val untilMs: Long = 0L,
+        val accumulatedSec: Int = 0,
+        val anchorPosMs: Long = 0L,
+    )
+
+    data class TapSeekOutcome(
+        val nextBurst: TapSeekBurst,
+        val didSeek: Boolean,
+        val destinationMs: Long = 0L,
+        val totalDeltaSec: Int = 0,
+        val tapCount: Int = 0,
+        val action: TapAction = TapAction.NONE,
+    )
+
+    /**
+     * Resolves video double-tap gestures by horizontal zone:
+     * - Single taps always toggle controls ([TapAction.NONE]) and never continue a seek burst.
+     * - Double-tap in [TapZone.CENTER] toggles play/pause ([TapAction.TOGGLE_PLAY_PAUSE]).
+     * - Double-tap in [TapZone.LEFT] / [TapZone.RIGHT] seeks ±[stepSec] per double-tap; repeating
+     *   double-taps on the same side within [burstWindowMs] accumulates the displayed delta.
+     */
+    fun resolveTapSeek(
+        nowMs: Long,
+        isLeftHalf: Boolean = false,
+        distanceFromLastTapPx: Float,
+        lastTapMs: Long,
+        doubleTapMaxGapMs: Long = 280L,
+        doubleTapMaxSlopPx: Float,
+        stepSec: Int,
+        currentPositionMs: Long,
+        durationMs: Long,
+        currentBurst: TapSeekBurst,
+        burstWindowMs: Long = 1100L,
+        zone: TapZone = if (isLeftHalf) TapZone.LEFT else TapZone.RIGHT,
+        lastZone: TapZone? = null,
+    ): TapSeekOutcome {
+        val safeStep = stepSec.coerceAtLeast(1)
+        val sameZone = lastZone == null || lastZone == zone
+        val isDoubleTap = lastTapMs > 0L && sameZone && (nowMs - lastTapMs) <= doubleTapMaxGapMs && distanceFromLastTapPx <= doubleTapMaxSlopPx
+        if (!isDoubleTap) {
+            val activeBurst = if (currentBurst.side != 0 && nowMs <= currentBurst.untilMs) currentBurst else TapSeekBurst()
+            return TapSeekOutcome(nextBurst = activeBurst, didSeek = false, action = TapAction.NONE)
+        }
+        if (zone == TapZone.CENTER) {
+            return TapSeekOutcome(
+                nextBurst = TapSeekBurst(),
+                didSeek = false,
+                action = TapAction.TOGGLE_PLAY_PAUSE,
+            )
+        }
+        val side = if (zone == TapZone.LEFT) -1 else 1
+        val action = if (side < 0) TapAction.SEEK_BACK else TapAction.SEEK_FORWARD
+        val inActiveBurst = currentBurst.side == side && nowMs <= currentBurst.untilMs
+        val totalSec = if (inActiveBurst) currentBurst.accumulatedSec + (side * safeStep) else side * safeStep
+        val anchorPos = if (inActiveBurst) currentBurst.anchorPosMs else currentPositionMs
+        val dest = safeSeek(anchorPos + totalSec * 1000L, durationMs)
+        val tapCount = kotlin.math.abs(totalSec / safeStep).coerceAtLeast(1)
+        return TapSeekOutcome(
+            nextBurst = TapSeekBurst(
+                side = side,
+                untilMs = nowMs + burstWindowMs,
+                accumulatedSec = totalSec,
+                anchorPosMs = anchorPos,
+            ),
+            didSeek = true,
+            destinationMs = dest,
+            totalDeltaSec = totalSec,
+            tapCount = tapCount,
+            action = action,
+        )
     }
 }

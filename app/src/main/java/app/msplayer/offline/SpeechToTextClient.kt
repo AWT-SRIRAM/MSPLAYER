@@ -768,6 +768,7 @@ object SpeechToTextClient {
         apiKey: String,
         onProgress: ((Int) -> Unit)? = null,
         translateToEnglish: Boolean = false,
+        languageHint: String? = null,
     ): List<AutoSubEngine.WordInfo> {
         val boundary = generateMultipartBoundary()
         val lineEnd = "\r\n"
@@ -775,6 +776,9 @@ object SpeechToTextClient {
         val mime = mimeForExtension(audioFile.extension)
         val modelName = if (translateToEnglish) "whisper-large-v3" else "whisper-large-v3-turbo"
         val endpoint = if (translateToEnglish) GROQ_TRANSLATIONS_ENDPOINT else GROQ_ENDPOINT
+        val cleanHint = languageHint?.trim()?.lowercase(Locale.ROOT)
+            ?.replace(Regex("""[^a-z-]"""), "")
+            ?.takeIf { it.isNotBlank() && it != "auto" && it != "all" }
         val preamble = buildString {
             append("$twoHyphens$boundary$lineEnd")
             append("Content-Disposition: form-data; name=\"model\"$lineEnd$lineEnd")
@@ -788,6 +792,11 @@ object SpeechToTextClient {
                 append("$twoHyphens$boundary$lineEnd")
                 append("Content-Disposition: form-data; name=\"timestamp_granularities[]\"$lineEnd$lineEnd")
                 append("word$lineEnd")
+                if (cleanHint != null) {
+                    append("$twoHyphens$boundary$lineEnd")
+                    append("Content-Disposition: form-data; name=\"language\"$lineEnd$lineEnd")
+                    append("$cleanHint$lineEnd")
+                }
             }
 
             append("$twoHyphens$boundary$lineEnd")
@@ -943,6 +952,7 @@ object SpeechToTextClient {
         hadBackupFallback: AtomicBoolean,
         lastErrorRef: AtomicReference<String?>,
         translateToEnglish: Boolean = false,
+        languageHint: String? = null,
     ): List<AutoSubEngine.WordInfo> {
         var lastErr: String? = null
         val candidatePrimary = primaryKeys.filter { it !in disabledPrimaryKeys }
@@ -952,7 +962,12 @@ object SpeechToTextClient {
                 val key = candidatePrimary[(startIdx + offset) % candidatePrimary.size]
                 if (key in disabledPrimaryKeys) continue
                 try {
-                    return transcribeWithGroq(chunk.file, key, translateToEnglish = translateToEnglish)
+                    return transcribeWithGroq(
+                        audioFile = chunk.file,
+                        apiKey = key,
+                        translateToEnglish = translateToEnglish,
+                        languageHint = languageHint,
+                    )
                 } catch (e: Exception) {
                     val msg = e.message ?: e::class.java.simpleName
                     lastErr = msg
@@ -961,7 +976,12 @@ object SpeechToTextClient {
                     } else if (isRateLimit(msg) && candidatePrimary.size - offset <= 1 && !msg.contains("day", ignoreCase = true)) {
                         runCatching { Thread.sleep(1500) }
                         try {
-                            return transcribeWithGroq(chunk.file, key, translateToEnglish = translateToEnglish)
+                            return transcribeWithGroq(
+                                audioFile = chunk.file,
+                                apiKey = key,
+                                translateToEnglish = translateToEnglish,
+                                languageHint = languageHint,
+                            )
                         } catch (retryErr: Exception) {
                             lastErr = retryErr.message ?: lastErr
                         }
@@ -1007,6 +1027,7 @@ object SpeechToTextClient {
         groqKey: String = DEFAULT_GROQ_KEY,
         deepgramKey: String = DEFAULT_DEEPGRAM_KEY,
         translateToEnglish: Boolean = false,
+        languageHint: String? = null,
         fallbackChunkProvider: (() -> ExtractedChunk?)? = null,
         isCancelled: (() -> Boolean)? = null,
         onStageProgress: ((String, Int) -> Unit)? = null,
@@ -1076,6 +1097,7 @@ object SpeechToTextClient {
                         hadBackupFallback = hadBackupFallback,
                         lastErrorRef = firstPrimaryErr,
                         translateToEnglish = translateToEnglish,
+                        languageHint = languageHint,
                     )
                     val shifted = rawWords.map { w ->
                         AutoSubEngine.WordInfo(w.word, w.start + chunkBaseSec, w.end + chunkBaseSec)

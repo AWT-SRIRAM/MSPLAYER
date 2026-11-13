@@ -120,5 +120,32 @@ class ContainerDemuxerTest {
         assertTrue(tamCues.isNotEmpty())
         assertEquals("MS PLAYER ASS style test", tamCues[0].text)
     }
+
+    @Test
+    fun testDemuxExtractsContainerMetadataAndRespectsCancellation() {
+        fun vint(len: Int) = byteArrayOf((0x80 or len).toByte())
+        fun elem(id: ByteArray, body: ByteArray) = id + vint(body.size) + body
+        fun str(id: ByteArray, text: String) = elem(id, text.toByteArray(Charsets.UTF_8))
+
+        val ebmlHeader = elem(byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()), str(byteArrayOf(0x42, 0x82.toByte()), "matroska"))
+        val infoEl = elem(
+            byteArrayOf(0x15, 0x49, 0xA9.toByte(), 0x66),
+            str(byteArrayOf(0x4D, 0x80.toByte()), "libebml v1.4.5") +
+                str(byteArrayOf(0x57, 0x41), "libmatroska v1.7.1")
+        )
+        val tmp = File.createTempFile("demux_info_test_", ".mkv")
+        try {
+            tmp.writeBytes(ebmlHeader + infoEl)
+            val result = ContainerDemuxer.parseMkv(tmp)
+            assertEquals("Matroska / WebM", result.containerInfo.format)
+            assertEquals("libebml v1.4.5 + libmatroska v1.7.1", result.containerInfo.encodingSoftware)
+
+            val cancelled = ContainerDemuxer.parseMkv(tmp, isCancelled = { true })
+            assertTrue(cancelled.tracks.isEmpty())
+            assertTrue(cancelled.cuesByTrack.isEmpty())
+        } finally {
+            tmp.delete()
+        }
+    }
 }
 

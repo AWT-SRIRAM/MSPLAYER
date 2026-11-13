@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -16,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,18 +31,28 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SurroundSound
@@ -51,7 +63,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -62,7 +76,10 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
@@ -83,7 +100,8 @@ import kotlin.math.sin
 
 sealed interface PlayerFeedback {
     data class Level(val brightness: Boolean, val percent: Int) : PlayerFeedback
-    data class Seek(val target: String, val difference: String) : PlayerFeedback
+    data class Seek(val target: String, val difference: String, val side: Int = 0, val tapCount: Int = 1) : PlayerFeedback
+    data class PlayPause(val playing: Boolean) : PlayerFeedback
     data class Zoom(val percent: Int) : PlayerFeedback
     data class AspectRatio(val label: String) : PlayerFeedback
     data class Speed(val rate: Float, val changedAt: Long = 0L) : PlayerFeedback
@@ -124,15 +142,115 @@ fun PlayerFeedbackOverlay(value: PlayerFeedback, modifier: Modifier = Modifier) 
         }
         is PlayerFeedback.Speed -> SpeedFeedback(value.rate, value.changedAt, modifier)
         is PlayerFeedback.Seek -> {
+            val pulse = remember { Animatable(1f) }
+            LaunchedEffect(value.tapCount, value.difference, value.side) {
+                pulse.snapTo(if (value.side != 0) 0.88f else 1.13f)
+                pulse.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 420f))
+            }
+            if (value.side != 0) {
+                val isForward = value.side > 0
+                val shape = if (isForward) {
+                    RoundedCornerShape(topStartPercent = 100, bottomStartPercent = 100)
+                } else {
+                    RoundedCornerShape(topEndPercent = 100, bottomEndPercent = 100)
+                }
+                val align = if (isForward) Alignment.CenterEnd else Alignment.CenterStart
+                val rawSec = value.difference.filter { it.isDigit() }.ifBlank { "10" }
+
+                Box(
+                    modifier = modifier.fillMaxSize(),
+                    contentAlignment = align,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .graphicsLayer {
+                                scaleX = pulse.value
+                                scaleY = pulse.value
+                            }
+                            .clip(shape)
+                            .frostedGlassChrome(
+                                enabled = glassEnabled,
+                                shape = shape,
+                                tint = Color(0x35FFFFFF),
+                                fallbackColor = Color.White.copy(alpha = 0.18f),
+                            )
+                            .background(
+                                Brush.horizontalGradient(
+                                    if (isForward) listOf(Color.White.copy(alpha = 0.04f), Color.White.copy(alpha = 0.22f))
+                                    else listOf(Color.White.copy(alpha = 0.22f), Color.White.copy(alpha = 0.04f))
+                                )
+                            )
+                            .width(150.dp)
+                            .height(280.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                        ) {
+                            Icon(
+                                if (isForward) Icons.Default.FastForward else Icons.Default.FastRewind,
+                                contentDescription = if (isForward) "Fast Forward" else "Fast Rewind",
+                                tint = Color.White,
+                                modifier = Modifier.size(34.dp),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "${rawSec}s",
+                                color = Color.White,
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp,
+                            )
+                        }
+                    }
+                }
+            } else {
+                Box(
+                    modifier
+                        .fillMaxSize()
+                        .safeDrawingPadding()
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(
+                        Modifier
+                            .graphicsLayer {
+                                scaleX = pulse.value
+                                scaleY = pulse.value
+                            }
+                            .frostedGlassChrome(glassEnabled, RoundedCornerShape(18.dp), fallbackColor = Color.Black.copy(alpha = .74f))
+                            .padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(value.difference, color = Accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(value.target, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
+        is PlayerFeedback.PlayPause -> {
             Row(
                 modifier.wrapContentSize(Alignment.Center)
-                    .frostedGlassChrome(glassEnabled, RoundedCornerShape(18.dp), fallbackColor = Color.Black.copy(alpha = .72f))
+                    .frostedGlassChrome(glassEnabled, RoundedCornerShape(18.dp), fallbackColor = Color.Black.copy(alpha = .74f))
                     .padding(horizontal = 18.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(value.target, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.width(12.dp))
-                Text(value.difference, color = Accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Icon(
+                    if (value.playing) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    null,
+                    tint = Accent,
+                    modifier = Modifier.size(22.dp),
+                )
+                Text(
+                    if (value.playing) "Playing" else "Paused",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
         is PlayerFeedback.Zoom -> {
@@ -198,21 +316,34 @@ fun PlayerMenuDialog(
 
     Dialog(onDismissRequest = onDismissRequest) {
         ImmersivePlayerDialog()
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(140)) + scaleIn(initialScale = 0.92f, animationSpec = MotionSpec.MorphSpring),
+        MaterialTheme(
+            colorScheme = darkColorScheme(
+                primary = Accent,
+                secondary = Cyan,
+                background = Color.Black,
+                surface = Color(0xFF131A26),
+                onBackground = Color.White,
+                onSurface = Color.White,
+            )
         ) {
-            BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                val maxH = (maxHeight - 24.dp).coerceAtLeast(220.dp)
-                Column(
-                    Modifier.widthIn(max = 400.dp).fillMaxWidth().heightIn(max = maxH)
-                        .frostedGlassChrome(glassEnabled, RoundedCornerShape(if (glassEnabled) 22.dp else 10.dp))
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
+            CompositionLocalProvider(LocalContentColor provides Color.White) {
+                AnimatedVisibility(
+                    visible = visible,
+                    enter = fadeIn(tween(140)) + scaleIn(initialScale = 0.92f, animationSpec = MotionSpec.MorphSpring),
                 ) {
-                    ProvideTextStyle(androidx.compose.ui.text.TextStyle(color = Color.White)) {
-                        Box(Modifier.padding(bottom = 12.dp)) { title() }
-                        Box(Modifier.weight(1f, fill = false)) { text() }
-                        Box(Modifier.align(Alignment.End)) { confirmButton() }
+                    BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        val maxH = (maxHeight - 24.dp).coerceAtLeast(220.dp)
+                        Column(
+                            Modifier.widthIn(max = 400.dp).fillMaxWidth().heightIn(max = maxH)
+                                .frostedGlassChrome(glassEnabled, RoundedCornerShape(if (glassEnabled) 22.dp else 10.dp))
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                        ) {
+                            ProvideTextStyle(androidx.compose.ui.text.TextStyle(color = Color.White)) {
+                                Box(Modifier.padding(bottom = 12.dp)) { title() }
+                                Box(Modifier.weight(1f, fill = false)) { text() }
+                                Box(Modifier.align(Alignment.End)) { confirmButton() }
+                            }
+                        }
                     }
                 }
             }
@@ -221,65 +352,156 @@ fun PlayerMenuDialog(
 }
 
 @Composable
-fun PlayerSidePanel(title: String, dismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun PlayerSidePanel(
+    title: String,
+    dismiss: () -> Unit,
+    scrollable: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val glassEnabled by rememberGlassEnabled()
     val animationsOn = rememberAnimationsEnabled()
     var visible by remember { mutableStateOf(!animationsOn) }
-    val dragOffsetX = remember { Animatable(0f) }
+    val dragOffset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { visible = true }
 
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ImmersivePlayerDialog()
-        BoxWithConstraints(Modifier.fillMaxSize().background(Color.Transparent)) {
-            val width = if (maxWidth > maxHeight) (maxWidth * .42f).coerceAtMost(440.dp) else maxWidth
-            Box(Modifier.fillMaxSize().clickable(onClick = dismiss))
-            val panelShape = RoundedCornerShape(topStart = if (glassEnabled) 24.dp else 0.dp, bottomStart = if (glassEnabled) 24.dp else 0.dp)
-            AnimatedVisibility(
-                visible = visible,
-                modifier = Modifier.align(Alignment.CenterEnd),
-                enter = slideInHorizontally(animationSpec = MotionSpec.PanelOffsetSpring) { it } + fadeIn(tween(150)),
-            ) {
-                Column(
-                    Modifier
-                        .width(width)
-                        .fillMaxHeight()
-                        .offset { IntOffset(dragOffsetX.value.roundToInt(), 0) }
-                        .pointerInput(width) {
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    scope.launch {
-                                        if (dragOffsetX.value > 84.dp.toPx()) {
-                                            dismiss()
-                                        } else {
-                                            dragOffsetX.animateTo(0f, MotionSpec.PressSpring)
-                                        }
-                                    }
-                                },
-                                onDragCancel = {
-                                    scope.launch { dragOffsetX.animateTo(0f, MotionSpec.PressSpring) }
-                                },
-                                onHorizontalDrag = { _, dragAmount ->
-                                    val next = (dragOffsetX.value + dragAmount).coerceAtLeast(0f)
-                                    scope.launch { dragOffsetX.snapTo(next) }
-                                },
-                            )
+        MaterialTheme(
+            colorScheme = darkColorScheme(
+                primary = Accent,
+                secondary = Cyan,
+                background = Color.Black,
+                surface = Color(0xFF131A26),
+                onBackground = Color.White,
+                onSurface = Color.White,
+            )
+        ) {
+            CompositionLocalProvider(LocalContentColor provides Color.White) {
+                BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f))) {
+                    val isPortrait = maxHeight >= maxWidth
+                    val panelWidth = if (isPortrait) maxWidth else (maxWidth * .44f).coerceIn(300.dp, 460.dp)
+                    val maxSheetHeight = (maxHeight * 0.72f).coerceAtLeast(240.dp)
+                    Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = dismiss))
+                    val panelShape = if (isPortrait) {
+                        RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                    } else {
+                        RoundedCornerShape(topStart = if (glassEnabled) 24.dp else 16.dp, bottomStart = if (glassEnabled) 24.dp else 16.dp)
+                    }
+                    AnimatedVisibility(
+                        visible = visible,
+                        modifier = Modifier.align(if (isPortrait) Alignment.BottomCenter else Alignment.CenterEnd),
+                        enter = if (isPortrait) {
+                            slideInVertically(animationSpec = MotionSpec.PanelOffsetSpring) { it } + fadeIn(tween(150))
+                        } else {
+                            slideInHorizontally(animationSpec = MotionSpec.PanelOffsetSpring) { it } + fadeIn(tween(150))
+                        },
+                    ) {
+                        val sizeModifier = if (isPortrait) {
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 160.dp, max = maxSheetHeight)
+                        } else {
+                            Modifier
+                                .width(panelWidth)
+                                .fillMaxHeight()
                         }
-                        .frostedGlassChrome(
-                            enabled = glassEnabled,
-                            shape = panelShape,
-                            tint = Color(0x660C1420),
-                            fallbackColor = Color.Black.copy(alpha = 0.28f),
-                            borderWidth = if (glassEnabled) 1.dp else 0.dp,
-                        )
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
-                        .padding(horizontal = 20.dp, vertical = 16.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(12.dp))
-                    content()
+                        val dragModifier = if (isPortrait) {
+                            Modifier
+                                .offset { IntOffset(0, dragOffset.value.roundToInt()) }
+                                .pointerInput(Unit) {
+                                    detectVerticalDragGestures(
+                                        onDragEnd = {
+                                            scope.launch {
+                                                if (dragOffset.value > 72.dp.toPx()) dismiss()
+                                                else dragOffset.animateTo(0f, MotionSpec.PressSpring)
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            scope.launch { dragOffset.animateTo(0f, MotionSpec.PressSpring) }
+                                        },
+                                        onVerticalDrag = { _, dragAmount ->
+                                            val next = (dragOffset.value + dragAmount).coerceAtLeast(0f)
+                                            scope.launch { dragOffset.snapTo(next) }
+                                        },
+                                    )
+                                }
+                        } else {
+                            Modifier
+                                .offset { IntOffset(dragOffset.value.roundToInt(), 0) }
+                                .pointerInput(panelWidth) {
+                                    detectHorizontalDragGestures(
+                                        onDragEnd = {
+                                            scope.launch {
+                                                if (dragOffset.value > 84.dp.toPx()) dismiss()
+                                                else dragOffset.animateTo(0f, MotionSpec.PressSpring)
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            scope.launch { dragOffset.animateTo(0f, MotionSpec.PressSpring) }
+                                        },
+                                        onHorizontalDrag = { _, dragAmount ->
+                                            val next = (dragOffset.value + dragAmount).coerceAtLeast(0f)
+                                            scope.launch { dragOffset.snapTo(next) }
+                                        },
+                                    )
+                                }
+                        }
+                        val insetsModifier = if (isPortrait) {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)).imePadding()
+                        } else {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Bottom + WindowInsetsSides.End))
+                        }
+                        Column(
+                            Modifier
+                                .then(sizeModifier)
+                                .then(dragModifier)
+                                .frostedGlassChrome(
+                                    enabled = glassEnabled,
+                                    shape = panelShape,
+                                    tint = Color(0xC40C1420),
+                                    fallbackColor = Color(0xEB101622),
+                                    borderWidth = if (glassEnabled) 1.dp else 0.8.dp,
+                                    fallbackBorderColor = Color.White.copy(alpha = 0.14f),
+                                )
+                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                                .then(insetsModifier)
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                        ) {
+                            if (isPortrait) {
+                                Box(
+                                    Modifier
+                                        .align(Alignment.CenterHorizontally)
+                                        .padding(bottom = 10.dp)
+                                        .width(38.dp)
+                                        .height(4.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.34f)),
+                                )
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                                IconButton(onClick = dismiss, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Close, "Close $title", tint = Color.White.copy(alpha = 0.72f), modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            if (scrollable) {
+                                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                                    content()
+                                }
+                            } else {
+                                Column(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                                    content()
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -589,7 +811,7 @@ fun AudioEffectsControls(service: PlaybackService) {
                     Spacer(Modifier.width(2.dp))
                     Icon(Icons.Default.ArrowDropDown, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 }
-                LiquidGlassPopupMenu(expanded = reverbExpanded, onDismissRequest = { reverbExpanded = false }) {
+                LiquidGlassPopupMenu(expanded = reverbExpanded, onDismissRequest = { reverbExpanded = false }, forceDark = true) {
                     AudioEffectSettings.reverbPresets.forEach { presetName ->
                         LiquidGlassPopupMenuItem(
                             text = {
@@ -900,245 +1122,525 @@ fun ImmersivePlayerDialog() {
 @Composable
 fun SpeedFeedback(rate: Float, changedAt: Long = 0L, modifier: Modifier = Modifier) {
     val glassEnabled by rememberGlassEnabled()
-    val innerStops = listOf(.5f, 1f, 1.5f, 2f, 2.5f, 3f)
     val animatedFraction by animateFloatAsState(
         targetValue = GestureRules.fraction(rate),
         animationSpec = MotionSpec.PressSpring,
         label = "speedFraction",
     )
 
-    var showRuler by remember { mutableStateOf(true) }
+    var expanded by remember { mutableStateOf(true) }
     LaunchedEffect(rate, changedAt) {
-        showRuler = true
+        expanded = true
         delay(1300L)
-        showRuler = false
+        expanded = false
     }
 
-    val animationsOn = rememberAnimationsEnabled()
-    val rawMorph by animateFloatAsState(
-        targetValue = if (showRuler) 1f else 0f,
-        animationSpec = if (animationsOn) spring(dampingRatio = 0.92f, stiffness = 340f) else tween(1),
-        label = "speedCapsuleMorph",
-    )
-    val morph = rawMorph.coerceIn(0f, 1f)
-    val density = LocalDensity.current
-
-    val rateText = if ((rate * 100).roundToInt() % 25 == 0 && (rate * 100).roundToInt() % 50 != 0) {
-        String.format(java.util.Locale.ROOT, "%.2f", rate)
-    } else {
+    val rateText = if ((rate * 100).roundToInt() % 50 == 0) {
         String.format(java.util.Locale.ROOT, "%.1f", rate)
+    } else {
+        String.format(java.util.Locale.ROOT, "%.2f", rate)
     }
 
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(top = 6.dp, start = 16.dp, end = 16.dp),
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+            .padding(top = 14.dp, start = 16.dp, end = 16.dp),
         contentAlignment = Alignment.TopCenter,
     ) {
-        val availableWidth = maxWidth
-        val expandedWidthDp = if (availableWidth > 500.dp) {
-            (availableWidth * 0.30f).coerceIn(244.dp, 286.dp)
-        } else {
-            (availableWidth * 0.72f).coerceIn(238.dp, 276.dp)
-        }
-        val expandedWidthPx = with(density) { expandedWidthDp.roundToPx() }
-        val expandedHPadPx = with(density) { 11.dp.roundToPx() }
-        val expandedTopPadPx = with(density) { 4.dp.roundToPx() }
-        val expandedBottomPadPx = with(density) { 4.dp.roundToPx() }
-        val rulerStatusGapPx = with(density) { 1.dp.roundToPx() }
-        val compactHPadPx = with(density) { 14.dp.roundToPx() }
-        val compactVPadPx = with(density) { 5.dp.roundToPx() }
-
-        val expandedStatusScaleTarget = 0.88f
-        val statusScale = 1f - (1f - expandedStatusScaleTarget) * morph
-        val capsuleCornerDp = (20f + (16f - 20f) * morph).dp
-        val tintColor = androidx.compose.ui.graphics.lerp(
-            Color(0x88101622),
-            Color(0x740B121C),
-            morph,
-        )
-        val rulerAlpha = ((morph - 0.52f) / 0.48f).coerceIn(0f, 1f)
-        val rulerScale = 0.90f + 0.10f * rulerAlpha
-        val rulerShiftPx = (morph - 1f) * with(density) { 5.dp.toPx() }
-
-        Layout(
-            modifier = Modifier.frostedGlassChrome(
-                enabled = glassEnabled,
-                shape = RoundedCornerShape(capsuleCornerDp),
-                tint = tintColor,
-                fallbackColor = Color.Black.copy(alpha = 0.72f),
-            ),
-            content = {
-                val endGapPx = with(density) { 5.dp.roundToPx() }
-                val labelToTrackGapPx = with(density) { 0.dp.roundToPx() }
-                val trackHeightPx = with(density) { 10.dp.roundToPx() }
-                Layout(
-                    content = {
-                        innerStops.forEach { stop ->
-                            val isActive = kotlin.math.abs(stop - rate) < 0.08f
+        val capsuleWidth = (maxWidth * 0.78f).coerceIn(248.dp, 316.dp)
+        val capsuleShape = RoundedCornerShape(if (expanded) 22.dp else 50.dp)
+        Box(
+            modifier = Modifier
+                .animateContentSize(
+                    animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+                )
+                .then(if (expanded) Modifier.width(capsuleWidth) else Modifier.wrapContentWidth())
+                .frostedGlassChrome(
+                    enabled = glassEnabled,
+                    shape = capsuleShape,
+                    tint = Color(0xBC08111D),
+                    fallbackColor = Color(0xDE0B121D),
+                    borderWidth = 1.dp,
+                    fallbackBorderColor = Color.White.copy(alpha = 0.16f),
+                )
+                .padding(
+                    horizontal = if (expanded) 14.dp else 16.dp,
+                    vertical = if (expanded) 10.dp else 8.dp,
+                ),
+        ) {
+            if (!expanded) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.35f), Cyan.copy(alpha = 0.25f)))),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (rate > 1f) Icons.Default.FastForward else Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Cyan,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
+                    Text(
+                        text = "${rateText}×",
+                        color = Color.White,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "Speed",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.42f), Cyan.copy(alpha = 0.30f)))),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    if (rate > 1f) Icons.Default.FastForward else Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                            }
                             Text(
-                                text = "${String.format(java.util.Locale.ROOT, "%.1f", stop)}x",
-                                color = if (isActive) Accent else Color.White,
-                                fontSize = if (isActive) 9.5f.sp else 8.5f.sp,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                text = "${rateText}×",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Color.White.copy(alpha = 0.08f))
+                                .border(0.6.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(50))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                text = "SLIDE TO ADJUST",
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(14.dp),
+                    ) {
+                        val y = size.height / 2f
+                        val trackH = 5.dp.toPx()
+                        val trackTop = y - trackH / 2f
+                        val frac = animatedFraction.coerceIn(0f, 1f)
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = 0.16f),
+                            topLeft = Offset(0f, trackTop),
+                            size = Size(size.width, trackH),
+                            cornerRadius = CornerRadius(trackH / 2f, trackH / 2f),
+                        )
+                        val fillW = (size.width * frac).coerceAtLeast(trackH)
+                        drawRoundRect(
+                            brush = Brush.horizontalGradient(listOf(Accent, Cyan)),
+                            topLeft = Offset(0f, trackTop),
+                            size = Size(fillW, trackH),
+                            cornerRadius = CornerRadius(trackH / 2f, trackH / 2f),
+                        )
+                        GestureRules.rulerStops.forEach { stop ->
+                            val cx = size.width * GestureRules.fraction(stop)
+                            drawCircle(
+                                color = Color.White.copy(alpha = if (GestureRules.fraction(stop) <= frac) 0.9f else 0.35f),
+                                radius = 1.4.dp.toPx(),
+                                center = Offset(cx, y),
+                            )
+                        }
+                        val thumbX = (size.width * frac).coerceIn(5.dp.toPx(), size.width - 5.dp.toPx())
+                        drawCircle(
+                            color = Cyan.copy(alpha = 0.36f),
+                            radius = 7.dp.toPx(),
+                            center = Offset(thumbX, y),
+                        )
+                        drawCircle(
+                            color = Color.White,
+                            radius = 4.6.dp.toPx(),
+                            center = Offset(thumbX, y),
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val anchorStops = listOf(0.25f to "0.25×", 1f to "1×", 2f to "2×", 3f to "3×", 4f to "4×")
+                        anchorStops.forEach { (stopVal, label) ->
+                            val isActive = kotlin.math.abs(stopVal - rate) < 0.25f
+                            Text(
+                                text = label,
+                                color = if (isActive) Cyan else Color.White.copy(alpha = 0.56f),
+                                fontSize = if (isActive) 10.5.sp else 9.5.sp,
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
                                 maxLines = 1,
                                 softWrap = false,
                             )
                         }
-                        val leftActive = kotlin.math.abs(0.25f - rate) < 0.08f
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlayerSpeedBar(
+    rate: Float,
+    onRateChange: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val glassEnabled by rememberGlassEnabled()
+    var editOpen by remember { mutableStateOf(false) }
+    var customInput by remember(rate) {
+        mutableStateOf(String.format(java.util.Locale.ROOT, "%.2f", rate))
+    }
+
+    fun applyRate(target: Float) {
+        val rounded = ((target.coerceIn(0.25f, 4.0f) * 100f).roundToInt() / 100f)
+        onRateChange(rounded)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        ImmersivePlayerDialog()
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Transparent)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            val barWidth = (maxWidth - 28.dp).coerceAtMost(540.dp)
+            Row(
+                modifier = Modifier
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+                    .padding(bottom = 18.dp)
+                    .width(barWidth)
+                    .frostedGlassChrome(
+                        enabled = glassEnabled,
+                        shape = RoundedCornerShape(24.dp),
+                        tint = Color(0xCC111926),
+                        fallbackColor = Color(0xDC121822),
+                        borderWidth = 1.dp,
+                        fallbackBorderColor = Color.White.copy(alpha = 0.16f),
+                    )
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(
+                    onClick = { applyRate(rate - 0.05f) },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.10f)),
+                ) {
+                    Icon(Icons.Default.Remove, "Decrease speed", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF070C14).copy(alpha = 0.85f))
+                            .border(0.7.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                            .clickable {
+                                customInput = String.format(java.util.Locale.ROOT, "%.2f", rate)
+                                editOpen = true
+                            }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
                         Text(
-                            text = "0.25x",
-                            color = if (leftActive) Accent else Color.White,
-                            fontSize = if (leftActive) 9.5f.sp else 8.5f.sp,
-                            fontWeight = if (leftActive) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1,
-                            softWrap = false,
+                            text = String.format(java.util.Locale.ROOT, "%.2fx", rate),
+                            color = Color.White,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
                         )
-                        val rightActive = kotlin.math.abs(4.0f - rate) < 0.08f
-                        Text(
-                            text = "4.0x",
-                            color = if (rightActive) Accent else Color.White,
-                            fontSize = if (rightActive) 9.5f.sp else 8.5f.sp,
-                            fontWeight = if (rightActive) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1,
-                            softWrap = false,
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit speed",
+                            tint = Cyan.copy(alpha = 0.9f),
+                            modifier = Modifier.size(12.dp),
                         )
-                        Canvas(Modifier) {
-                            val y = size.height / 2f
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    val ticks = listOf(0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f)
+                    val rangeMin = 0.25f
+                    val rangeMax = 4.0f
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(30.dp)
+                            .pointerInput(Unit) {
+                                detectTapGestures { offset ->
+                                    val frac = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                                    val raw = rangeMin + frac * (rangeMax - rangeMin)
+                                    val snapped = ((raw / 0.05f).roundToInt() * 0.05f).coerceIn(rangeMin, rangeMax)
+                                    applyRate(snapped)
+                                }
+                            }
+                            .pointerInput(Unit) {
+                                detectHorizontalDragGestures { change, _ ->
+                                    change.consume()
+                                    val frac = (change.position.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                                    val raw = rangeMin + frac * (rangeMax - rangeMin)
+                                    val snapped = ((raw / 0.05f).roundToInt() * 0.05f).coerceIn(rangeMin, rangeMax)
+                                    applyRate(snapped)
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Canvas(Modifier.fillMaxWidth().height(20.dp)) {
+                            val cy = size.height / 2f
+                            val trackPad = 6.dp.toPx()
+                            val usableW = (size.width - trackPad * 2).coerceAtLeast(1f)
+                            val curFrac = ((rate - rangeMin) / (rangeMax - rangeMin)).coerceIn(0f, 1f)
+                            val thumbX = trackPad + usableW * curFrac
                             drawLine(
-                                color = Color.White.copy(alpha = 0.36f),
-                                start = androidx.compose.ui.geometry.Offset(0f, y),
-                                end = androidx.compose.ui.geometry.Offset(size.width, y),
-                                strokeWidth = 1.6f.dp.toPx(),
-                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                color = Color.White.copy(alpha = 0.24f),
+                                start = Offset(trackPad, cy),
+                                end = Offset(trackPad + usableW, cy),
+                                strokeWidth = 3.dp.toPx(),
+                                cap = StrokeCap.Round,
                             )
-                            GestureRules.rulerStops.forEach { stop ->
-                                val cx = size.width * GestureRules.fraction(stop)
+                            drawLine(
+                                brush = Brush.horizontalGradient(listOf(Accent, Cyan)),
+                                start = Offset(trackPad, cy),
+                                end = Offset(thumbX, cy),
+                                strokeWidth = 3.dp.toPx(),
+                                cap = StrokeCap.Round,
+                            )
+                            ticks.forEach { stop ->
+                                val f = (stop - rangeMin) / (rangeMax - rangeMin)
+                                val x = trackPad + usableW * f
                                 drawCircle(
-                                    color = Color.White.copy(alpha = 0.90f),
-                                    radius = 1.4f.dp.toPx(),
-                                    center = androidx.compose.ui.geometry.Offset(cx, y),
+                                    color = if (f <= curFrac) Color.White else Color.White.copy(alpha = 0.55f),
+                                    radius = if (stop == 1.0f) 2.2.dp.toPx() else 1.5.dp.toPx(),
+                                    center = Offset(x, cy),
                                 )
                             }
-                            val thumbX = size.width * animatedFraction.coerceIn(0f, 1f)
                             drawCircle(
-                                color = Accent.copy(alpha = 0.34f),
-                                radius = 5.8f.dp.toPx(),
-                                center = androidx.compose.ui.geometry.Offset(thumbX, y),
+                                color = Color.White.copy(alpha = 0.28f),
+                                radius = 9.dp.toPx(),
+                                center = Offset(thumbX, cy),
                             )
                             drawCircle(
-                                color = Accent,
-                                radius = 3.8f.dp.toPx(),
-                                center = androidx.compose.ui.geometry.Offset(thumbX, y),
+                                color = Color.White,
+                                radius = 6.dp.toPx(),
+                                center = Offset(thumbX, cy),
                             )
                         }
-                    },
-                    modifier = Modifier.graphicsLayer {
-                        alpha = rulerAlpha
-                        translationY = rulerShiftPx
-                        scaleX = rulerScale
-                        scaleY = rulerScale
-                    },
-                ) { measurables, constraints ->
-                    val labelCs = constraints.copy(minWidth = 0, minHeight = 0)
-                    val innerPlaceables = measurables.subList(0, innerStops.size).map { it.measure(labelCs) }
-                    val leftLabel = measurables[innerStops.size].measure(labelCs)
-                    val rightLabel = measurables[innerStops.size + 1].measure(labelCs)
-
-                    val trackLeft = leftLabel.width + endGapPx
-                    val trackRight = (constraints.maxWidth - rightLabel.width - endGapPx).coerceAtLeast(trackLeft + 48)
-                    val trackWidth = trackRight - trackLeft
-
-                    val canvasPlaceable = measurables[innerStops.size + 2].measure(
-                        Constraints.fixed(trackWidth, trackHeightPx)
-                    )
-
-                    val topBandHeight = innerPlaceables.maxOfOrNull { it.height } ?: 0
-                    val bottomBandHeight = maxOf(canvasPlaceable.height, leftLabel.height, rightLabel.height)
-                    val totalW = constraints.maxWidth
-                    val totalH = topBandHeight + labelToTrackGapPx + bottomBandHeight
-
-                    layout(totalW, totalH) {
-                        innerPlaceables.forEachIndexed { idx, placeable ->
-                            val stop = innerStops[idx]
-                            val dotX = trackLeft + trackWidth * GestureRules.fraction(stop)
-                            val x = (dotX - placeable.width / 2f).roundToInt()
-                                .coerceIn(0, (totalW - placeable.width).coerceAtLeast(0))
-                            val y = (topBandHeight - placeable.height) / 2
-                            placeable.placeRelative(x, y)
-                        }
-                        val trackTop = topBandHeight + labelToTrackGapPx + (bottomBandHeight - canvasPlaceable.height) / 2
-                        val trackCenterY = trackTop + canvasPlaceable.height / 2
-                        leftLabel.placeRelative(0, trackCenterY - leftLabel.height / 2)
-                        rightLabel.placeRelative(totalW - rightLabel.width, trackCenterY - rightLabel.height / 2)
-                        canvasPlaceable.placeRelative(trackLeft, trackTop)
                     }
                 }
 
-                Row(
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = statusScale
-                        scaleY = statusScale
-                    },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                IconButton(
+                    onClick = { applyRate(rate + 0.05f) },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.10f)),
                 ) {
-                    Icon(
-                        if (rate > 1f) Icons.Default.FastForward else Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(13.dp),
+                    Icon(Icons.Default.Add, "Increase speed", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+
+                IconButton(
+                    onClick = { applyRate(1.0f) },
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.10f)),
+                ) {
+                    Icon(Icons.Default.Refresh, "Reset speed to 1.0x", tint = Cyan, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+    }
+
+    if (editOpen) {
+        AlertDialog(
+            onDismissRequest = { editOpen = false },
+            containerColor = Color(0xFF141C28),
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            title = { Text("Playback Speed (0.25× – 4.00×)", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = customInput,
+                        onValueChange = { customInput = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                        singleLine = true,
+                        label = { Text("Speed multiplier") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    Text(
-                        text = "${rateText}x Speed Playing",
-                        color = Color.White,
-                        fontSize = 11.5f.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f).forEach { preset ->
+                            FilterChip(
+                                selected = kotlin.math.abs(rate - preset) < 0.02f,
+                                onClick = {
+                                    applyRate(preset)
+                                    editOpen = false
+                                },
+                                label = { Text("${preset}×") },
+                            )
+                        }
+                    }
                 }
             },
-        ) { measurables, constraints ->
-            val maxRulerWidth = (expandedWidthPx - expandedHPadPx * 2).coerceAtLeast(160)
-            val rulerPlaceable = measurables[0].measure(
-                Constraints(
-                    minWidth = maxRulerWidth,
-                    maxWidth = maxRulerWidth,
-                    minHeight = 0,
-                    maxHeight = constraints.maxHeight,
-                )
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val parsed = customInput.toFloatOrNull()
+                        if (parsed != null) applyRate(parsed)
+                        editOpen = false
+                    },
+                ) { Text("Apply", color = Cyan) }
+            },
+            dismissButton = {
+                TextButton(onClick = { editOpen = false }) { Text("Cancel", color = Muted) }
+            },
+        )
+    }
+}
+
+@Composable
+fun MediaInformationContent(
+    info: MediaDetailedInfo,
+    inPlayer: Boolean = true,
+) {
+    val labelColor = if (inPlayer) Color(0xFF9FB0C7) else LocalAppPalette.current.textSecondary
+    val valueColor = if (inPlayer) Color.White else LocalAppPalette.current.textPrimary
+    val sectionColor = if (inPlayer) Cyan else LocalAppPalette.current.accent
+    val dividerColor = if (inPlayer) Color.White.copy(alpha = 0.10f) else LocalAppPalette.current.divider
+
+    @Composable
+    fun InfoSection(title: String, rows: List<Pair<String, String>>) {
+        val valid = rows.filter { it.second.isNotBlank() }
+        if (valid.isEmpty()) return
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = title,
+                color = sectionColor,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.SemiBold,
             )
-            val statusPlaceable = measurables[1].measure(
-                constraints.copy(minWidth = 0, minHeight = 0)
-            )
-
-            val expandedStatusWidth = (statusPlaceable.width * expandedStatusScaleTarget).roundToInt()
-            val expandedStatusHeight = (statusPlaceable.height * expandedStatusScaleTarget).roundToInt()
-            val expandedW = maxOf(expandedWidthPx, expandedStatusWidth + expandedHPadPx * 2)
-            val expandedH = expandedTopPadPx + rulerPlaceable.height + rulerStatusGapPx + expandedStatusHeight + expandedBottomPadPx
-            val compactW = statusPlaceable.width + compactHPadPx * 2
-            val compactH = statusPlaceable.height + compactVPadPx * 2
-
-            val currentW = (compactW + (expandedW - compactW) * morph).roundToInt().coerceAtLeast(1)
-            val currentH = (compactH + (expandedH - compactH) * morph).roundToInt().coerceAtLeast(1)
-
-            layout(currentW, currentH) {
-                if (rulerAlpha > 0.01f) {
-                    rulerPlaceable.placeRelative(
-                        x = (currentW - rulerPlaceable.width) / 2,
-                        y = expandedTopPadPx,
+            valid.forEach { (k, v) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Text(
+                        text = k,
+                        color = labelColor,
+                        fontSize = 13.sp,
+                        modifier = Modifier.width(104.dp),
+                    )
+                    Text(
+                        text = v,
+                        color = valueColor,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f),
                     )
                 }
-                val compactStatusY = (compactH - statusPlaceable.height) / 2f
-                val expandedStatusY = expandedH - expandedBottomPadPx - (expandedStatusHeight + statusPlaceable.height) / 2f
-                val statusY = (compactStatusY + (expandedStatusY - compactStatusY) * morph).roundToInt()
-                statusPlaceable.placeRelative(
-                    x = (currentW - statusPlaceable.width) / 2,
-                    y = statusY,
-                )
             }
+            HorizontalDivider(modifier = Modifier.padding(top = 6.dp), color = dividerColor)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        InfoSection(
+            title = "File",
+            rows = listOf(
+                "File" to info.fileName,
+                "Location" to info.location,
+                "Size" to formatDetailedBytes(info.sizeBytes),
+                "Date" to formatDetailedDate(info.modifiedAtMs),
+                "Subtitle" to info.subtitleSummary,
+            ),
+        )
+        InfoSection(
+            title = "Media",
+            rows = listOf(
+                "Format" to info.format,
+                "Resolution" to (if (info.width > 0 && info.height > 0) "${info.width} × ${info.height}" else ""),
+                "Length" to (if (info.durationMs > 0) durationText(info.durationMs) else ""),
+                "Encoding SW" to info.encodingSoftware,
+            ),
+        )
+        info.streams.forEach { stream ->
+            val streamRows = buildList {
+                add("Type" to stream.type)
+                if (stream.title.isNotBlank()) add("Title" to stream.title)
+                if (stream.codec.isNotBlank()) add("Codec" to stream.codec)
+                if (stream.profile.isNotBlank()) add("Profile" to stream.profile)
+                if (stream.width > 0 && stream.height > 0) add("Resolution" to "${stream.width} × ${stream.height}")
+                if (stream.frameRate.isNotBlank()) add("Frame rate" to stream.frameRate)
+                if (stream.sampleRateHz > 0) add("Sample rate" to "${stream.sampleRateHz} Hz")
+                if (stream.channels > 0) add("Channels" to "${stream.channels} ch")
+                if (stream.language.isNotBlank()) add("Language" to stream.language)
+            }
+            InfoSection(title = "Stream #${stream.index}", rows = streamRows)
         }
     }
 }
@@ -1149,8 +1651,8 @@ fun PlayerFeedbackHost(value: PlayerFeedback?) {
     if (value != null) SideEffect { last = value }
     AnimatedVisibility(
         visible = value != null,
-        enter = fadeIn(tween(110)) + scaleIn(initialScale = 0.94f, animationSpec = MotionSpec.MorphSpring),
-        exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.96f),
+        enter = fadeIn(tween(80)) + scaleIn(initialScale = 0.92f, animationSpec = MotionSpec.MorphSpring),
+        exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.95f),
     ) {
         (value ?: last)?.let { PlayerFeedbackOverlay(it, Modifier.fillMaxSize()) }
     }

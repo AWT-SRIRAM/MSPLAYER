@@ -356,12 +356,10 @@ object OnlineSubtitlesClient {
 
     internal fun toSubDlLanguageCode(code2: String): String = when (code2.trim().lowercase(Locale.ROOT)) {
         "", "all" -> ""
-        "en" -> "EN"
-        "ta" -> "TA"
-        "hi" -> "HI"
-        "ja" -> "JA"
-        "es" -> "ES"
-        else -> code2.trim().uppercase(Locale.ROOT)
+        "zh", "zh-cn", "zh-tw" -> "ZH"
+        "pt-br" -> "BR_PT"
+        else -> SubtitleTranslator.findLanguage(code2)?.code?.uppercase(Locale.ROOT)
+            ?: code2.trim().uppercase(Locale.ROOT)
     }
 
     fun parseSubDlResponse(json: String): List<OnlineSubtitleCandidate> {
@@ -450,14 +448,10 @@ object OnlineSubtitlesClient {
         return parseSubSourceSubtitles(subsJson, languageCode2)
     }
 
-    internal fun toSubSourceLanguageSlug(code2: String): String = when (code2.trim().lowercase(Locale.ROOT)) {
-        "", "all" -> ""
-        "en" -> "english"
-        "ta" -> "tamil"
-        "hi" -> "hindi"
-        "ja" -> "japanese"
-        "es" -> "spanish"
-        else -> ""
+    internal fun toSubSourceLanguageSlug(code2: String): String {
+        val clean = code2.trim().lowercase(Locale.ROOT)
+        if (clean.isEmpty() || clean == "all") return ""
+        return SubtitleTranslator.findLanguage(clean)?.label?.lowercase(Locale.ROOT).orEmpty()
     }
 
     fun parseSubSourceFirstMovieId(json: String, hints: MediaHints): Int? {
@@ -508,14 +502,8 @@ object OnlineSubtitlesClient {
             }
             val directUrl = (obj["downloadUrl"] ?: obj["download_url"] ?: obj["link"])?.toString()?.trim().orEmpty()
             val dlUrl = if (directUrl.startsWith("http", true)) directUrl else "$SUBSOURCE_API_BASE/subtitles/$subId/download"
-            val langBadge = when (rawLang.lowercase(Locale.ROOT)) {
-                "english", "en" -> "EN"
-                "tamil", "ta" -> "TA"
-                "hindi", "hi" -> "HI"
-                "japanese", "ja" -> "JA"
-                "spanish", "es" -> "ES"
-                else -> rawLang.uppercase(Locale.ROOT).take(6).ifBlank { "SUB" }
-            }
+            val langBadge = SubtitleTranslator.findLanguage(rawLang)?.code?.uppercase(Locale.ROOT)
+                ?: rawLang.uppercase(Locale.ROOT).take(6).ifBlank { "SUB" }
             val contributor = (obj["contributor"] as? Map<*, *>)?.get("displayname")?.toString()
                 ?: obj["uploader"]?.toString()
                 ?: ""

@@ -60,6 +60,8 @@ fun Modifier.videoGestures(
         if (locked || !enabled) return@pointerInput
         var lastTap = 0L
         var lastPoint = Offset.Zero
+        var lastZone: PlaybackRules.TapZone? = null
+        var seekBurst = PlaybackRules.TapSeekBurst()
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = true)
             val start = down.uptimeMillis
@@ -168,13 +170,61 @@ fun Modifier.videoGestures(
                         if (mode == 6) SubtitleStyle.load(activity).copy(bottomMargin = currentSubBottom).save(activity)
                         if (mode == 7) { val s = SubtitleStyle.load(activity).copy(scale = currentSubScale.toInt()); service.subtitleStyle(s) }
                         if (mode == 0) {
-                            if (start - lastTap < 300 && (down.position - lastPoint).getDistance() < 80.dp.toPx()) {
-                                val seconds = Store.prefs(activity).getInt("double_tap", 10) * (if (down.position.x < size.width / 2) -1 else 1)
-                                val destination = service.timeline.value.position + seconds * 1000
-                                service.seek(destination)
-                                feedbackNow(PlayerFeedback.Seek(durationText(destination), "${if (seconds >= 0) "+" else ""}${seconds}s"))
-                                lastTap = 0
-                            } else { tapNow(); lastTap = start; lastPoint = down.position }
+                            val stepSec = Store.prefs(activity).getInt("double_tap", 10)
+                            val xFraction = if (size.width > 0) down.position.x / size.width.toFloat() else 0.5f
+                            val zone = PlaybackRules.tapZoneForFraction(xFraction)
+                            val outcome = PlaybackRules.resolveTapSeek(
+                                nowMs = start,
+                                distanceFromLastTapPx = if (lastTap > 0L) (down.position - lastPoint).getDistance() else Float.MAX_VALUE,
+                                lastTapMs = lastTap,
+                                doubleTapMaxGapMs = 280L,
+                                doubleTapMaxSlopPx = 56.dp.toPx(),
+                                stepSec = stepSec,
+                                currentPositionMs = service.timeline.value.position,
+                                durationMs = service.timeline.value.duration,
+                                currentBurst = seekBurst,
+                                burstWindowMs = 1100L,
+                                zone = zone,
+                                lastZone = lastZone,
+                            )
+                            seekBurst = outcome.nextBurst
+                            when (outcome.action) {
+                                PlaybackRules.TapAction.SEEK_BACK,
+                                PlaybackRules.TapAction.SEEK_FORWARD -> {
+                                    service.seek(outcome.destinationMs)
+                                    val deltaPrefix = if (outcome.totalDeltaSec >= 0) "+" else ""
+                                    val side = if (outcome.action == PlaybackRules.TapAction.SEEK_BACK) -1 else 1
+                                    feedbackNow(
+                                        PlayerFeedback.Seek(
+                                            target = durationText(outcome.destinationMs),
+                                            difference = "$deltaPrefix${outcome.totalDeltaSec}s",
+                                            side = side,
+                                            tapCount = outcome.tapCount,
+                                        )
+                                    )
+                                    try {
+                                        activity.window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                    } catch (_: Exception) {}
+                                    lastTap = 0L
+                                    lastZone = null
+                                }
+                                PlaybackRules.TapAction.TOGGLE_PLAY_PAUSE -> {
+                                    val nextPlaying = !service.state.value.playing
+                                    service.toggle()
+                                    feedbackNow(PlayerFeedback.PlayPause(nextPlaying))
+                                    try {
+                                        activity.window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                    } catch (_: Exception) {}
+                                    lastTap = 0L
+                                    lastZone = null
+                                }
+                                PlaybackRules.TapAction.NONE -> {
+                                    tapNow()
+                                    lastTap = start
+                                    lastZone = zone
+                                    lastPoint = down.position
+                                }
+                            }
                         }
                         break
                     }

@@ -34,12 +34,25 @@ class StrokeView(context: Context) : View(context) {
 
     private var formattedText: CharSequence = ""
     private var strokeText: CharSequence = ""
+    private var formattedSecondaryText: CharSequence = ""
+    private var strokeSecondaryText: CharSequence = ""
 
     private var fillLayout: StaticLayout? = null
     private var strokeLayout: StaticLayout? = null
+    private var secondaryFillLayout: StaticLayout? = null
+    private var secondaryStrokeLayout: StaticLayout? = null
     private var cachedWidth = -1
 
     private val textPaint = TextPaint().apply {
+        flags = Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.DITHER_FLAG
+        isFilterBitmap = true
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+        strokeMiter = 10f
+        letterSpacing = 0.02f
+    }
+
+    private val secondaryTextPaint = TextPaint().apply {
         flags = Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.DITHER_FLAG
         isFilterBitmap = true
         strokeJoin = Paint.Join.ROUND
@@ -54,6 +67,7 @@ class StrokeView(context: Context) : View(context) {
     private val lineRect = RectF()
 
     private var strokeWidthPx = 0f
+    private var secondaryStrokeWidthPx = 0f
     private var shadowBlurPx = 0f
     private var shadowOffsetPx = 0f
     private var shadowAlpha = 0
@@ -87,6 +101,10 @@ class StrokeView(context: Context) : View(context) {
         effectiveSizePx = px
         textPaint.textSize = px
 
+        val secondaryFactor = (style.secondaryScale / 100f).coerceIn(0.5f, 1.5f)
+        val secPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, effectiveSizeSp * secondaryFactor, metrics)
+        secondaryTextPaint.textSize = secPx
+
         lineSpacingFactor = (style.lineSpacing / 100f).coerceIn(0.8f, 2.0f) * 1.15f
 
         val baseResolved = SubtitleFonts.resolve(style.font)
@@ -98,12 +116,19 @@ class StrokeView(context: Context) : View(context) {
             if (wantBold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         }
         textPaint.typeface = tf
+        secondaryTextPaint.typeface = tf
         // Only apply synthetic faux bold if the resolved Typeface isn't natively bold,
         // avoiding double-bold glyph width mismatches during Canvas stroke/fill passes.
-        textPaint.isFakeBoldText = wantBold && !tf.isBold
+        val fakeBold = wantBold && !tf.isBold
+        textPaint.isFakeBoldText = fakeBold
+        secondaryTextPaint.isFakeBoldText = fakeBold
 
         strokeWidthPx = if (style.outline > 0) {
             val visibleBorder = ((px * 0.030f) * style.outline).coerceAtLeast(1.3f * density)
+            visibleBorder * 2f
+        } else 0f
+        secondaryStrokeWidthPx = if (style.outline > 0) {
+            val visibleBorder = ((secPx * 0.030f) * style.outline).coerceAtLeast(1.2f * density)
             visibleBorder * 2f
         } else 0f
 
@@ -116,52 +141,76 @@ class StrokeView(context: Context) : View(context) {
             shadowOffsetPx = 0f
         }
 
-        edgeGuardPx = ceil(strokeWidthPx / 2f + shadowBlurPx + abs(shadowOffsetPx) + 4f * density).toInt()
+        edgeGuardPx = ceil(maxOf(strokeWidthPx, secondaryStrokeWidthPx) / 2f + shadowBlurPx + abs(shadowOffsetPx) + 4f * density).toInt()
 
         if (layoutChanged) {
             cachedWidth = -1
             fillLayout = null
             strokeLayout = null
+            secondaryFillLayout = null
+            secondaryStrokeLayout = null
         }
         invalidate()
     }
 
-    fun setSubtitleText(text: CharSequence?) {
+    private fun normalizeText(text: CharSequence?): CharSequence {
         val trimmed = text?.toString()?.trim()
         if (trimmed.isNullOrBlank() ||
             trimmed.matches(Regex("""^(?:[mnlbspc]\s+-?\d+(?:\s+-?\d+)*\s*)+$""", RegexOption.IGNORE_CASE))
         ) {
+            return ""
+        }
+        return if (trimmed.contains('<')) {
+            Html.fromHtml(trimmed.replace("\n", "<br/>"), Html.FROM_HTML_MODE_LEGACY).trim()
+        } else {
+            trimmed
+        }
+    }
+
+    fun setSubtitleText(text: CharSequence?) {
+        setDualSubtitleText(text, null)
+    }
+
+    fun setDualSubtitleText(primaryText: CharSequence?, secondaryText: CharSequence?) {
+        val nextPrimary = normalizeText(primaryText)
+        val nextSecondary = normalizeText(secondaryText)
+
+        if (nextPrimary.isEmpty() && nextSecondary.isEmpty()) {
             if (visibility != GONE) visibility = GONE
-            if (formattedText.isNotEmpty()) {
+            if (formattedText.isNotEmpty() || formattedSecondaryText.isNotEmpty()) {
                 formattedText = ""
                 strokeText = ""
+                formattedSecondaryText = ""
+                strokeSecondaryText = ""
                 fillLayout = null
                 strokeLayout = null
+                secondaryFillLayout = null
+                secondaryStrokeLayout = null
                 cachedWidth = -1
                 invalidate()
             }
             return
         }
 
-        val formatted: CharSequence = if (trimmed.contains('<')) {
-            Html.fromHtml(trimmed.replace("\n", "<br/>"), Html.FROM_HTML_MODE_LEGACY).trim()
-        } else {
-            trimmed
-        }
-
         if (visibility != VISIBLE) visibility = VISIBLE
-        if (formatted.toString() != formattedText.toString() || formattedText.javaClass != formatted.javaClass) {
-            formattedText = formatted
-            strokeText = stripColorSpans(formatted)
+        val primaryChanged = nextPrimary.toString() != formattedText.toString() || formattedText.javaClass != nextPrimary.javaClass
+        val secondaryChanged = nextSecondary.toString() != formattedSecondaryText.toString() || formattedSecondaryText.javaClass != nextSecondary.javaClass
+        if (primaryChanged || secondaryChanged) {
+            formattedText = nextPrimary
+            strokeText = stripColorSpans(nextPrimary)
+            formattedSecondaryText = nextSecondary
+            strokeSecondaryText = stripColorSpans(nextSecondary)
             fillLayout = null
             strokeLayout = null
+            secondaryFillLayout = null
+            secondaryStrokeLayout = null
             cachedWidth = -1
             invalidate()
         }
     }
 
     private fun stripColorSpans(source: CharSequence): CharSequence {
-        if (source !is Spanned) return source
+        if (source !is Spanned || source.isEmpty()) return source
         val fg = source.getSpans(0, source.length, ForegroundColorSpan::class.java)
         val bg = source.getSpans(0, source.length, BackgroundColorSpan::class.java)
         if (fg.isEmpty() && bg.isEmpty()) return source
@@ -172,30 +221,56 @@ class StrokeView(context: Context) : View(context) {
     }
 
     private fun ensureLayouts(availWidth: Int) {
-        if (fillLayout != null && cachedWidth == availWidth) return
+        if ((fillLayout != null || formattedText.isEmpty()) &&
+            (secondaryFillLayout != null || formattedSecondaryText.isEmpty()) &&
+            cachedWidth == availWidth
+        ) return
         cachedWidth = availWidth
-        val text = formattedText
-        if (text.isEmpty()) {
+
+        if (formattedText.isEmpty()) {
             fillLayout = null
             strokeLayout = null
-            return
-        }
-        val mainLayout = StaticLayout.Builder.obtain(text, 0, text.length, textPaint, availWidth)
-            .setAlignment(Layout.Alignment.ALIGN_CENTER)
-            .setLineSpacing(0f, lineSpacingFactor)
-            .setIncludePad(false)
-            .setMaxLines(12)
-            .build()
-        fillLayout = mainLayout
-        strokeLayout = if (strokeText === formattedText) {
-            mainLayout
         } else {
-            StaticLayout.Builder.obtain(strokeText, 0, strokeText.length, textPaint, availWidth)
+            val mainLayout = StaticLayout.Builder.obtain(formattedText, 0, formattedText.length, textPaint, availWidth)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER)
                 .setLineSpacing(0f, lineSpacingFactor)
                 .setIncludePad(false)
                 .setMaxLines(12)
                 .build()
+            fillLayout = mainLayout
+            strokeLayout = if (strokeText === formattedText) {
+                mainLayout
+            } else {
+                StaticLayout.Builder.obtain(strokeText, 0, strokeText.length, textPaint, availWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setLineSpacing(0f, lineSpacingFactor)
+                    .setIncludePad(false)
+                    .setMaxLines(12)
+                    .build()
+            }
+        }
+
+        if (formattedSecondaryText.isEmpty()) {
+            secondaryFillLayout = null
+            secondaryStrokeLayout = null
+        } else {
+            val secLayout = StaticLayout.Builder.obtain(formattedSecondaryText, 0, formattedSecondaryText.length, secondaryTextPaint, availWidth)
+                .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                .setLineSpacing(0f, lineSpacingFactor)
+                .setIncludePad(false)
+                .setMaxLines(8)
+                .build()
+            secondaryFillLayout = secLayout
+            secondaryStrokeLayout = if (strokeSecondaryText === formattedSecondaryText) {
+                secLayout
+            } else {
+                StaticLayout.Builder.obtain(strokeSecondaryText, 0, strokeSecondaryText.length, secondaryTextPaint, availWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setLineSpacing(0f, lineSpacingFactor)
+                    .setIncludePad(false)
+                    .setMaxLines(8)
+                    .build()
+            }
         }
     }
 
@@ -204,52 +279,29 @@ class StrokeView(context: Context) : View(context) {
         cachedWidth = -1
         fillLayout = null
         strokeLayout = null
+        secondaryFillLayout = null
+        secondaryStrokeLayout = null
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        if (formattedText.isEmpty() || width <= 0 || height <= 0) return
-
+    private fun drawBand(
+        canvas: Canvas,
+        fLayout: StaticLayout,
+        sLayout: StaticLayout,
+        paint: TextPaint,
+        foregroundColor: Int,
+        bandStrokeWidthPx: Float,
+        hPad: Int,
+        yStart: Float,
+    ) {
         val density = resources.displayMetrics.density
-        val hPad = (24f * density).toInt() + edgeGuardPx
-        val availWidth = (width - hPad * 2).coerceAtLeast(1)
-        ensureLayouts(availWidth)
-
-        val fLayout = fillLayout ?: return
-        val sLayout = strokeLayout ?: fLayout
-
-        val baseBottomPad = (18f * density) + edgeGuardPx
-        val userMarginLift = (currentStyle.bottomMargin.coerceIn(0, 40) / 100f) * (height * 0.42f)
-
-        val yStart = if (dockTop) {
-            val topReserve = if (controlsVisible) (76f * density) else (16f * density)
-            val maxY = (height - baseBottomPad - fLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
-            (topReserve + (currentStyle.bottomMargin.coerceIn(0, 40) / 100f) * (height * 0.25f) + edgeGuardPx)
-                .coerceIn(edgeGuardPx.toFloat(), maxY)
-        } else {
-            val controlsLift = when {
-                controlsBottomReservedPx > 0f && controlsVisible ->
-                    (height - controlsBottomReservedPx + 10f * density).coerceIn(0f, height * 0.35f)
-                controlsVisible -> height * 0.14f
-                else -> 0f
-            }
-            val primarySpuLift = if (liftAbovePrimarySpu) {
-                (effectiveSizePx * 2.15f).coerceAtLeast(52f * density)
-            } else 0f
-            val bottomReserved = baseBottomPad + maxOf(controlsLift, 0f) + userMarginLift + primarySpuLift
-            val maxY = (height - baseBottomPad - fLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
-            (height - bottomReserved - fLayout.height).coerceIn(edgeGuardPx.toFloat(), maxY)
-        }
-
         val saveCount = canvas.save()
         canvas.translate(hPad.toFloat(), yStart)
 
-        // Pass 0: Tight rounded background boxes around non-empty lines
         if (currentStyle.background) {
             val bgAlpha = currentStyle.backgroundOpacity.coerceIn(0, 255)
             bgPaint.color = (currentStyle.backgroundColor and 0x00FFFFFF) or (bgAlpha shl 24)
-            val padX = (10f * density) + (strokeWidthPx / 2f)
-            val padY = (4f * density) + (strokeWidthPx / 2f)
+            val padX = (10f * density) + (bandStrokeWidthPx / 2f)
+            val padY = (4f * density) + (bandStrokeWidthPx / 2f)
             val corner = 6f * density
             for (i in 0 until fLayout.lineCount) {
                 val left = fLayout.getLineLeft(i)
@@ -266,36 +318,98 @@ class StrokeView(context: Context) : View(context) {
             }
         }
 
-        // Pass 1: Drop shadow + outer stroke border on identical StaticLayout coordinates
         if (shadowAlpha > 0) {
-            textPaint.setShadowLayer(
+            paint.setShadowLayer(
                 shadowBlurPx,
                 shadowOffsetPx,
                 shadowOffsetPx,
                 Color.argb(shadowAlpha, 0, 0, 0)
             )
         } else {
-            textPaint.clearShadowLayer()
+            paint.clearShadowLayer()
         }
 
-        if (strokeWidthPx > 0f) {
-            textPaint.style = Paint.Style.STROKE
-            textPaint.strokeWidth = strokeWidthPx
-            textPaint.color = (currentStyle.borderColor and 0x00FFFFFF) or
-                    (currentStyle.borderOpacity.coerceIn(0, 255) shl 24)
+        if (bandStrokeWidthPx > 0f) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = bandStrokeWidthPx
+            paint.color = (currentStyle.borderColor and 0x00FFFFFF) or
+                (currentStyle.borderOpacity.coerceIn(0, 255) shl 24)
             sLayout.draw(canvas)
         } else if (shadowAlpha > 0) {
-            textPaint.style = Paint.Style.FILL
-            textPaint.color = (currentStyle.color and 0x00FFFFFF) or (0xFF shl 24)
+            paint.style = Paint.Style.FILL
+            paint.color = (foregroundColor and 0x00FFFFFF) or (0xFF shl 24)
             fLayout.draw(canvas)
         }
 
-        // Pass 2: Crisp foreground fill at identical pixel positions with shadow cleared
-        textPaint.clearShadowLayer()
-        textPaint.style = Paint.Style.FILL
-        textPaint.color = (currentStyle.color and 0x00FFFFFF) or (0xFF shl 24)
+        paint.clearShadowLayer()
+        paint.style = Paint.Style.FILL
+        paint.color = (foregroundColor and 0x00FFFFFF) or (0xFF shl 24)
         fLayout.draw(canvas)
 
         canvas.restoreToCount(saveCount)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        if ((formattedText.isEmpty() && formattedSecondaryText.isEmpty()) || width <= 0 || height <= 0) return
+
+        val density = resources.displayMetrics.density
+        val hPad = (24f * density).toInt() + edgeGuardPx
+        val availWidth = (width - hPad * 2).coerceAtLeast(1)
+        ensureLayouts(availWidth)
+
+        val baseBottomPad = (18f * density) + edgeGuardPx
+        val userMarginLift = (currentStyle.bottomMargin.coerceIn(0, 40) / 100f) * (height * 0.42f)
+        val controlsLift = when {
+            controlsBottomReservedPx > 0f && controlsVisible ->
+                (height - controlsBottomReservedPx + 10f * density).coerceIn(0f, height * 0.35f)
+            controlsVisible -> height * 0.14f
+            else -> 0f
+        }
+        val primarySpuLift = if (liftAbovePrimarySpu) {
+            (effectiveSizePx * 2.15f).coerceAtLeast(52f * density)
+        } else 0f
+        val bottomReserved = baseBottomPad + maxOf(controlsLift, 0f) + userMarginLift + primarySpuLift
+
+        val fLayout = fillLayout
+        val sLayout = strokeLayout ?: fLayout
+        var yPrimary = height.toFloat() - bottomReserved
+
+        if (fLayout != null && sLayout != null) {
+            yPrimary = if (dockTop) {
+                val topReserve = if (controlsVisible) (76f * density) else (16f * density)
+                val maxY = (height - baseBottomPad - fLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
+                (topReserve + (currentStyle.bottomMargin.coerceIn(0, 40) / 100f) * (height * 0.25f) + edgeGuardPx)
+                    .coerceIn(edgeGuardPx.toFloat(), maxY)
+            } else {
+                val maxY = (height - baseBottomPad - fLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
+                (height - bottomReserved - fLayout.height).coerceIn(edgeGuardPx.toFloat(), maxY)
+            }
+            drawBand(canvas, fLayout, sLayout, textPaint, currentStyle.color, strokeWidthPx, hPad, yPrimary)
+        }
+
+        val secFLayout = secondaryFillLayout
+        val secSLayout = secondaryStrokeLayout ?: secFLayout
+        if (secFLayout != null && secSLayout != null) {
+            val ySecondary = when {
+                dockTop && fLayout != null -> {
+                    (yPrimary + fLayout.height + 10f * density).coerceAtMost((height - baseBottomPad - secFLayout.height).coerceAtLeast(edgeGuardPx.toFloat()))
+                }
+                currentStyle.secondaryTop -> {
+                    val topReserve = if (controlsVisible) (76f * density) else (18f * density)
+                    val maxY = (height - baseBottomPad - secFLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
+                    (topReserve + edgeGuardPx).coerceIn(edgeGuardPx.toFloat(), maxY)
+                }
+                fLayout != null -> {
+                    val gap = 10f * density
+                    (yPrimary - gap - secFLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
+                }
+                else -> {
+                    val maxY = (height - baseBottomPad - secFLayout.height).coerceAtLeast(edgeGuardPx.toFloat())
+                    (height - bottomReserved - secFLayout.height).coerceIn(edgeGuardPx.toFloat(), maxY)
+                }
+            }
+            drawBand(canvas, secFLayout, secSLayout, secondaryTextPaint, currentStyle.secondaryColor, secondaryStrokeWidthPx, hPad, ySecondary)
+        }
     }
 }

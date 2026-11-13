@@ -14,6 +14,8 @@ data class SubtitleStyle(
     val borderColor: Int = 0, val borderOpacity: Int = 204,
     val encoding: String = "", val compensateNativeInset: Boolean = true, val legacyFontFamily: String? = null,
     val secondaryTop: Boolean = false,
+    val secondaryColor: Int = 0x88CCFF,
+    val secondaryScale: Int = 90,
 ) {
     val textScale: Int get() = (scale.coerceIn(50, 300) * size.coerceIn(10, 60) / 23f).roundToInt().coerceIn(10, 500)
     fun options(): List<String> = renderOptions(SubtitleFonts.resolve(font).let { resolved -> legacyFontFamily?.let { resolved.copy(family=it) } ?: resolved })
@@ -52,9 +54,102 @@ data class SubtitleStyle(
             .putInt("subtitle_border_color", borderColor and 0xFFFFFF)
             .putInt("subtitle_border_opacity", borderOpacity.coerceIn(0, 255))
             .putString("subtitle_encoding", encoding.takeIf { it in encodings.values } ?: "")
-            .putBoolean("subtitle_secondary_top", secondaryTop).apply()
+            .putBoolean("subtitle_secondary_top", secondaryTop)
+            .putInt("subtitle_secondary_color", secondaryColor and 0xFFFFFF)
+            .putInt("subtitle_secondary_scale", secondaryScale.coerceIn(50, 150))
+            .apply()
     }
     companion object {
+        data class NamedPreset(val name: String, val style: SubtitleStyle, val builtIn: Boolean = false)
+
+        val quickPresets = listOf(
+            NamedPreset(
+                "Cinema",
+                SubtitleStyle(size = 24, bold = true, outline = 2, shadow = 160, color = 0xFFFFFF, bottomMargin = 4),
+                builtIn = true,
+            ),
+            NamedPreset(
+                "Anime",
+                SubtitleStyle(size = 23, bold = true, outline = 3, shadow = 180, color = 0xFFFFFF, secondaryTop = true, secondaryColor = 0x66D8F3, secondaryScale = 88),
+                builtIn = true,
+            ),
+            NamedPreset(
+                "High Contrast",
+                SubtitleStyle(size = 25, bold = true, outline = 3, shadow = 200, color = 0xFFFF00, background = true, backgroundColor = 0x000000, backgroundOpacity = 178),
+                builtIn = true,
+            ),
+            NamedPreset(
+                "Minimal",
+                SubtitleStyle(size = 20, bold = false, outline = 1, shadow = 110, color = 0xFFFFFF, bottomMargin = 2, secondaryColor = 0x88CCFF, secondaryScale = 85),
+                builtIn = true,
+            ),
+        )
+
+        private fun encodePresetLine(name: String, s: SubtitleStyle): String {
+            val safeName = name.replace("|", " ").replace("\n", " ").trim()
+            return listOf(
+                safeName, s.size, s.bold, s.outline, s.shadow, s.shadowOffset, s.lineSpacing,
+                s.bottomMargin, s.font.replace("|", " "), s.scale, s.color, s.background,
+                s.backgroundColor, s.backgroundOpacity, s.borderColor, s.borderOpacity,
+                s.secondaryTop, s.secondaryColor, s.secondaryScale,
+            ).joinToString("|")
+        }
+
+        private fun decodePresetLine(line: String): NamedPreset? {
+            val p = line.split("|")
+            if (p.size < 19) return null
+            val name = p[0].trim().takeIf { it.isNotEmpty() } ?: return null
+            return NamedPreset(
+                name = name,
+                style = SubtitleStyle(
+                    size = p[1].toIntOrNull()?.coerceIn(10, 60) ?: 23,
+                    bold = p[2].toBooleanStrictOrNull() ?: true,
+                    outline = p[3].toIntOrNull()?.coerceIn(0, 6) ?: 2,
+                    shadow = p[4].toIntOrNull()?.coerceIn(0, 255) ?: 140,
+                    shadowOffset = p[5].toIntOrNull()?.coerceIn(0, 10) ?: 2,
+                    lineSpacing = p[6].toIntOrNull()?.coerceIn(80, 200) ?: 100,
+                    bottomMargin = p[7].toIntOrNull()?.coerceIn(0, 40) ?: 0,
+                    font = p[8].ifBlank { "Default" },
+                    scale = p[9].toIntOrNull()?.coerceIn(50, 300) ?: 100,
+                    color = p[10].toIntOrNull() ?: 0xFFFFFF,
+                    background = p[11].toBooleanStrictOrNull() ?: false,
+                    backgroundColor = p[12].toIntOrNull() ?: 0,
+                    backgroundOpacity = p[13].toIntOrNull()?.coerceIn(0, 255) ?: 128,
+                    borderColor = p[14].toIntOrNull() ?: 0,
+                    borderOpacity = p[15].toIntOrNull()?.coerceIn(0, 255) ?: 204,
+                    secondaryTop = p[16].toBooleanStrictOrNull() ?: false,
+                    secondaryColor = p[17].toIntOrNull() ?: 0x88CCFF,
+                    secondaryScale = p[18].toIntOrNull()?.coerceIn(50, 150) ?: 90,
+                ),
+                builtIn = false,
+            )
+        }
+
+        fun bookmarkedPresets(context: Context): List<NamedPreset> {
+            val raw = Store.prefs(context).getString("subtitle_bookmarked_presets_v1", "") ?: return emptyList()
+            return raw.lineSequence().mapNotNull(::decodePresetLine).toList()
+        }
+
+        fun saveBookmarkedPreset(context: Context, name: String, style: SubtitleStyle): List<NamedPreset> {
+            val cleanName = name.replace("|", " ").replace("\n", " ").trim().ifBlank { "Custom" }
+            val existing = bookmarkedPresets(context).filterNot { it.name.equals(cleanName, ignoreCase = true) }
+            val updated = (listOf(NamedPreset(cleanName, style, builtIn = false)) + existing).take(12)
+            Store.prefs(context).edit().putString(
+                "subtitle_bookmarked_presets_v1",
+                updated.joinToString("\n") { encodePresetLine(it.name, it.style) },
+            ).apply()
+            return updated
+        }
+
+        fun deleteBookmarkedPreset(context: Context, name: String): List<NamedPreset> {
+            val updated = bookmarkedPresets(context).filterNot { it.name.equals(name.trim(), ignoreCase = true) }
+            Store.prefs(context).edit().putString(
+                "subtitle_bookmarked_presets_v1",
+                updated.joinToString("\n") { encodePresetLine(it.name, it.style) },
+            ).apply()
+            return updated
+        }
+
         val encodings = linkedMapOf("Auto" to "", "UTF-8" to "UTF-8", "UTF-16" to "UTF-16",
             "Western (Windows-1252)" to "Windows-1252", "Central European (Windows-1250)" to "Windows-1250",
             "Cyrillic (Windows-1251)" to "Windows-1251", "Greek (Windows-1253)" to "Windows-1253",
@@ -102,7 +197,9 @@ data class SubtitleStyle(
                 borderOpacity=p.getInt("subtitle_border_opacity",204),encoding=p.getString("subtitle_encoding","") ?: "",
                 compensateNativeInset=p.getBoolean("subtitle_compensate_inset",true),
                 legacyFontFamily=p.getString("subtitle_legacy_font_family",null),
-                secondaryTop=p.getBoolean("subtitle_secondary_top",false))
+                secondaryTop=p.getBoolean("subtitle_secondary_top",false),
+                secondaryColor=p.getInt("subtitle_secondary_color",0x88CCFF),
+                secondaryScale=p.getInt("subtitle_secondary_scale",90).coerceIn(50,150))
         }
     }
 }

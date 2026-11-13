@@ -106,6 +106,8 @@ fun MusicPlayerScreen(
     val shuffle by service.shuffleEnabled.collectAsState()
     val repeat by service.repeatMode.collectAsState()
     val ab by service.abPoints.collectAsState()
+    val sleepRemaining by service.sleepTimerRemainingMs.collectAsState()
+    val sleepMode by service.sleepTimerMode.collectAsState()
     var panel by remember { mutableStateOf<String?>(null) }
     var title by remember(item.uri) { mutableStateOf(item.title) }
     var artist by remember(item.uri) { mutableStateOf("Unknown artist") }
@@ -189,6 +191,19 @@ fun MusicPlayerScreen(
         }
     } else Modifier
 
+    val playerScheme = remember {
+        darkColorScheme(
+            primary = Accent,
+            secondary = Cyan,
+            background = Color.Black,
+            surface = Color(0xFF131A26),
+            onBackground = Color.White,
+            onSurface = Color.White,
+        )
+    }
+
+    MaterialTheme(colorScheme = playerScheme) {
+        CompositionLocalProvider(LocalContentColor provides Color.White) {
     Box(
         Modifier
             .fillMaxSize()
@@ -248,9 +263,9 @@ fun MusicPlayerScreen(
                     onClick={activity.exitPlayer()},
                     interactionSource = backSrc,
                     modifier = Modifier.iosLiquidPress(backSrc, scaleDown = 0.90f),
-                ) { Icon(Icons.Default.KeyboardArrowDown,"Back to library") }
+                ) { Icon(Icons.Default.KeyboardArrowDown,"Back to library", tint = Color.White) }
                 Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally) {
-                    Text(title,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=20.sp,fontWeight=FontWeight.Bold)
+                    Text(title, color = Color.White, maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=20.sp,fontWeight=FontWeight.Bold)
                     Text(artist,color=Color.LightGray,fontSize=14.sp,maxLines=1)
                 }
                 val shareSrc = remember { MutableInteractionSource() }
@@ -258,7 +273,7 @@ fun MusicPlayerScreen(
                     onClick={ activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type="audio/*";putExtra(Intent.EXTRA_STREAM,Uri.parse(item.uri));addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) },"Share audio")) },
                     interactionSource = shareSrc,
                     modifier = Modifier.iosLiquidPress(shareSrc, scaleDown = 0.90f),
-                ) { Icon(Icons.Default.Share,"Share audio") }
+                ) { Icon(Icons.Default.Share,"Share audio", tint = Color.White) }
             }
             BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical=24.dp).heightIn(max=440.dp),contentAlignment=Alignment.Center) {
                 val size=maxWidth.coerceAtMost(400.dp)
@@ -301,9 +316,9 @@ fun MusicPlayerScreen(
                 val s3 = remember { MutableInteractionSource() }
                 val s4 = remember { MutableInteractionSource() }
                 val s5 = remember { MutableInteractionSource() }
-                IconButton(onClick={panel="Effects"}, interactionSource = s1, modifier = Modifier.iosLiquidPress(s1, scaleDown = 0.88f)) { Icon(Icons.Default.Tune,"Audio effects") }
+                IconButton(onClick={panel="Effects"}, interactionSource = s1, modifier = Modifier.iosLiquidPress(s1, scaleDown = 0.88f)) { Icon(Icons.Default.Tune,"Audio effects", tint = Color.White) }
                 IconButton(onClick={service.markAB()}, interactionSource = s2, modifier = Modifier.iosLiquidPress(s2, scaleDown = 0.88f)) { Text(if(ab.second!=null) "A↔B" else if(ab.first!=null) "A→" else "A–B",color=if(ab.first!=null) dynamicPrimary else Color.White) }
-                IconButton(onClick={panel="Speed"}, interactionSource = s3, modifier = Modifier.iosLiquidPress(s3, scaleDown = 0.88f)) { Icon(Icons.Default.Speed,"Playback speed") }
+                IconButton(onClick={panel="Speed"}, interactionSource = s3, modifier = Modifier.iosLiquidPress(s3, scaleDown = 0.88f)) { Icon(Icons.Default.Speed,"Playback speed", tint = Color.White) }
                 IconButton(
                     onClick={
                         favourite=!favourite
@@ -313,12 +328,30 @@ fun MusicPlayerScreen(
                     interactionSource = s4,
                     modifier = Modifier.iosLiquidPress(s4, scaleDown = 0.88f),
                 ) { Icon(if(favourite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,"Favourite",tint=if(favourite) dynamicPrimary else Color.White) }
-                IconButton(onClick={panel="Options"}, interactionSource = s5, modifier = Modifier.iosLiquidPress(s5, scaleDown = 0.88f)) { Icon(Icons.Default.MoreVert,"Music options") }
+                IconButton(onClick={panel="Options"}, interactionSource = s5, modifier = Modifier.iosLiquidPress(s5, scaleDown = 0.88f)) { Icon(Icons.Default.MoreVert,"Music options", tint = Color.White) }
             }
             Spacer(Modifier.height(20.dp))
+            if (sleepMode != "Off") {
+                Box(
+                    Modifier
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .frostedGlassChrome(glassEnabled, RoundedCornerShape(14.dp), tint = dynamicPrimary.copy(alpha = 0.24f))
+                        .clickable { panel = "Sleep" }
+                        .padding(horizontal = 12.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        "\uD83C\uDF19 Sleep ${formatSleepCountdown(sleepRemaining, sleepMode)}",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
             var target by remember(item.uri) { mutableStateOf<Long?>(null) }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text(durationText(target?:timeline.position));Text(durationText(timeline.duration)) }
-            Slider(thumb={ Box(Modifier.size(15.dp).background(dynamicPrimary,CircleShape)) },track={ slider ->
+            val thumbSize by animateDpAsState(if (target != null) 21.dp else 15.dp, MotionSpec.DpSpring, label = "musicThumb")
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text(durationText(target?:timeline.position), color = Color.White);Text(durationText(timeline.duration), color = Color.White) }
+            Slider(thumb={ Box(Modifier.size(thumbSize).background(dynamicPrimary,CircleShape)) },track={ slider ->
                 Canvas(Modifier.fillMaxWidth().height(3.dp)) {
                     val fraction=(slider.value/slider.valueRange.endInclusive.coerceAtLeast(1f)).coerceIn(0f,1f)
                     drawLine(Color.Gray,androidx.compose.ui.geometry.Offset(0f,size.height/2),androidx.compose.ui.geometry.Offset(size.width,size.height/2),3.dp.toPx())
@@ -333,7 +366,7 @@ fun MusicPlayerScreen(
                 val rpSrc = remember { MutableInteractionSource() }
 
                 IconButton(onClick={service.toggleShuffle()}, interactionSource = shSrc, modifier = Modifier.iosLiquidPress(shSrc, scaleDown = 0.88f)) { Icon(Icons.Default.Shuffle,"Shuffle",tint=if(shuffle) dynamicPrimary else Color.White) }
-                IconButton(onClick={service.previous()}, interactionSource = prSrc, modifier = Modifier.iosLiquidPress(prSrc, scaleDown = 0.88f)) { Icon(Icons.Default.SkipPrevious,"Previous",modifier=Modifier.size(32.dp)) }
+                IconButton(onClick={service.previous()}, interactionSource = prSrc, modifier = Modifier.iosLiquidPress(prSrc, scaleDown = 0.88f)) { Icon(Icons.Default.SkipPrevious,"Previous", tint = Color.White, modifier=Modifier.size(32.dp)) }
                 if (glassEnabled) {
                     Box(
                         modifier = Modifier
@@ -358,9 +391,9 @@ fun MusicPlayerScreen(
                         interactionSource = plSrc,
                         modifier=Modifier.size(74.dp).iosLiquidPress(plSrc, scaleDown = 0.90f),
                         border=BorderStroke(2.dp,Color.White),
-                    ) { Icon(if(state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",modifier=Modifier.size(44.dp)) }
+                    ) { Icon(if(state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause", tint = Color.White, modifier=Modifier.size(44.dp)) }
                 }
-                IconButton(onClick={service.next()}, interactionSource = nxSrc, modifier = Modifier.iosLiquidPress(nxSrc, scaleDown = 0.88f)) { Icon(Icons.Default.SkipNext,"Next",modifier=Modifier.size(32.dp)) }
+                IconButton(onClick={service.next()}, interactionSource = nxSrc, modifier = Modifier.iosLiquidPress(nxSrc, scaleDown = 0.88f)) { Icon(Icons.Default.SkipNext,"Next", tint = Color.White, modifier=Modifier.size(32.dp)) }
                 IconButton(onClick={service.setRepeat(when(repeat){"off"->"all";"all"->"one";else->"off"})}, interactionSource = rpSrc, modifier = Modifier.iosLiquidPress(rpSrc, scaleDown = 0.88f)) { Icon(if(repeat=="one") Icons.Default.RepeatOne else Icons.Default.Repeat,"Repeat $repeat",tint=if(repeat!="off") dynamicPrimary else Color.White) }
             }
             Row(Modifier.fillMaxWidth().padding(vertical=10.dp),horizontalArrangement=Arrangement.SpaceBetween) {
@@ -372,23 +405,67 @@ fun MusicPlayerScreen(
                     modifier = Modifier.iosLiquidPress(lSrc, scaleDown = 0.94f).let {
                         if (glassEnabled) it.liquidGlassSurface(musicBackdrop, true, RoundedCornerShape(20.dp), tint = Color(0x460C141F)) else it
                     },
-                ) { Icon(Icons.Default.Lyrics,null);Spacer(Modifier.width(6.dp));Text("Lyrics",color=Color.White) }
+                ) { Icon(Icons.Default.Lyrics,null, tint = Color.White);Spacer(Modifier.width(6.dp));Text("Lyrics",color=Color.White) }
                 TextButton(
                     onClick={panel="Queue"},
                     interactionSource = qSrc,
                     modifier = Modifier.iosLiquidPress(qSrc, scaleDown = 0.94f).let {
                         if (glassEnabled) it.liquidGlassSurface(musicBackdrop, true, RoundedCornerShape(20.dp), tint = Color(0x460C141F)) else it
                     },
-                ) { Icon(Icons.Default.QueueMusic,null);Spacer(Modifier.width(6.dp));Text("Playing Queue",color=Color.White) }
+                ) { Icon(Icons.Default.QueueMusic,null, tint = Color.White);Spacer(Modifier.width(6.dp));Text("Playing Queue",color=Color.White) }
             }
         }
         state.error?.let { Text(it,color=Color(0xFFFFB4AB),modifier=Modifier.align(Alignment.BottomCenter).safeDrawingPadding().background(Color.Black).padding(12.dp)) }
     }
     when(panel) {
         "Effects" -> PlayerSidePanel("Audio effects",{panel=null}) { AudioEffectsControls(service) }
-        "Queue" -> PlayerSidePanel("Playing Queue",{panel=null}) { queue.forEach { track -> TrackChoice(track.title,track.uri==item.uri,onClick={service.playQueueItem(track);panel=null}) } }
-        "Speed" -> PlayerSidePanel("Playback speed",{panel=null}) { listOf(.25f,.5f,1f,1.5f,2f,2.5f,3f,4f).forEach { rate -> TrackChoice("${rate}×",kotlin.math.abs(state.rate-rate)<.01f,onClick={service.rate(rate)}) } }
-        "Lyrics" -> PlayerSidePanel("Lyrics",{panel=null}) {
+        "Queue" -> PlayerSidePanel("Playing Queue", { panel = null }, scrollable = false) {
+            if (queue.isEmpty()) {
+                Text("Queue is empty", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
+            } else {
+                LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                    items(queue.size) { idx ->
+                        val track = queue[idx]
+                        val currentTrack = track.uri == item.uri
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (currentTrack) dynamicPrimary.copy(alpha = 0.20f) else Color.Transparent)
+                                .clickable { service.playQueueItem(track); panel = null }
+                                .padding(horizontal = 10.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                if (currentTrack) Icons.Default.GraphicEq else Icons.Default.MusicNote,
+                                contentDescription = null,
+                                tint = if (currentTrack) dynamicPrimary else Color.White.copy(alpha = 0.65f),
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                track.title,
+                                color = if (currentTrack) dynamicPrimary else Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = if (currentTrack) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (track.duration > 0L) {
+                                Text(durationText(track.duration), color = Muted, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "Speed" -> PlayerSpeedBar(
+            rate = state.rate,
+            onRateChange = { service.rate(it) },
+            onDismiss = { panel = null },
+        )
+        "Lyrics" -> PlayerSidePanel("Lyrics", { panel = null }, scrollable = false) {
             Box(
                 Modifier.fillMaxWidth()
                     .frostedGlassChrome(glassEnabled, RoundedCornerShape(14.dp), tint = Color(0x520C1420))
@@ -401,12 +478,23 @@ fun MusicPlayerScreen(
             val current=lyrics.indexOfLast { it.time!=null && it.time<=timeline.position }
             val scroll=androidx.compose.foundation.lazy.rememberLazyListState()
             LaunchedEffect(current) { if(current>=0) scroll.animateScrollToItem(current) }
-            LazyColumn(Modifier.fillMaxWidth().height(340.dp),state=scroll) { items(lyrics.size) { i -> Text(lyrics[i].text,color=if(i==current) dynamicPrimary else Color.White,modifier=Modifier.padding(vertical=8.dp)) } }
+            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 160.dp, max = 380.dp),state=scroll) { items(lyrics.size) { i -> Text(lyrics[i].text,color=if(i==current) dynamicPrimary else Color.White,modifier=Modifier.animateItem(placementSpec = MotionSpec.ItemPlacementSpring).padding(vertical=8.dp)) } }
+        }
+        "Information" -> PlayerSidePanel("Information", { panel = null }) {
+            val info = remember(item.uri, state.duration, state.audioTracks.size) { service.currentMediaDetailedInfo() }
+            if (info != null) {
+                MediaInformationContent(info = info, inPlayer = true)
+            } else {
+                Text("Media information unavailable", color = Muted, fontSize = 13.sp)
+            }
         }
         "Options" -> PlayerSidePanel("Options",{panel=null}) {
+            val sleepLabel = if (sleepMode == "Off") "Sleep Timer" else "Sleep Timer (${formatSleepCountdown(sleepRemaining, sleepMode)})"
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
+                    "Information" to { panel = "Information" },
                     "Equalizer" to { panel = "Effects" },
+                    sleepLabel to { panel = "Sleep" },
                     (if (ab.first == null) "Set A" else if (ab.second == null) "Set B" else "Clear A-B") to { service.markAB(); panel = null },
                     "Exit" to { activity.closeApp() },
                 ).forEach { (label, act) ->
@@ -419,5 +507,57 @@ fun MusicPlayerScreen(
                 }
             }
         }
+        "Sleep" -> PlayerSidePanel("Sleep Timer", { panel = null }) {
+            SleepTimerPanelContent(service = service, onDismiss = { panel = null })
+        }
+    }
+        }
+    }
+}
+
+fun formatSleepCountdown(remainingMs: Long?, mode: String): String {
+    if (mode == "End of track") return "End of track"
+    if (remainingMs == null) return mode
+    val totalSec = ((remainingMs + 999L) / 1000L).coerceAtLeast(0L)
+    val mins = totalSec / 60L
+    val secs = totalSec % 60L
+    return String.format(java.util.Locale.ROOT, "%d:%02d", mins, secs)
+}
+
+@Composable
+fun SleepTimerPanelContent(service: PlaybackService, onDismiss: () -> Unit) {
+    val sleepMode by service.sleepTimerMode.collectAsState()
+    val sleepRemaining by service.sleepTimerRemainingMs.collectAsState()
+    if (sleepMode != "Off") {
+        Text(
+            "Remaining: ${formatSleepCountdown(sleepRemaining, sleepMode)}",
+            color = Accent,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+    Text(
+        "Audio fades smoothly over the final 5 seconds before pausing.",
+        color = Muted,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+    Spacer(Modifier.height(6.dp))
+    listOf(
+        "Off" to { service.cancelSleepTimer(); onDismiss() },
+        "15 minutes" to { service.setSleepTimer(15); onDismiss() },
+        "30 minutes" to { service.setSleepTimer(30); onDismiss() },
+        "60 minutes" to { service.setSleepTimer(60); onDismiss() },
+        "End of current track" to { service.setSleepTimer(null, endOfTrack = true); onDismiss() },
+    ).forEach { (label, action) ->
+        val selected = when {
+            label == "Off" -> sleepMode == "Off"
+            label.startsWith("15") -> sleepMode == "15m"
+            label.startsWith("30") -> sleepMode == "30m"
+            label.startsWith("60") -> sleepMode == "60m"
+            else -> sleepMode == "End of track"
+        }
+        TrackChoice(label, selected = selected, onClick = action)
     }
 }

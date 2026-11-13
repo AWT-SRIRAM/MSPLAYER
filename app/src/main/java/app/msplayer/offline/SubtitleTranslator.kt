@@ -5,13 +5,22 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Cloud Subtitle Translator adapted from SRM_TAMIL_SUB architecture.
+ * Cloud Subtitle Translator.
  * Locks original timestamps via cue-ID JSON batches (35 cues/batch), strips HTML/BOM/ASS tags,
- * streams Batch 0 live, cascades Groq Llama 3.3 70B -> Llama 3.1 8B -> free GTX fallback,
- * and saves UTF-8 BOM `<title>.<en|ta>.srt`.
+ * translates batches in parallel across all active Groq keys (Llama 3.3 70B -> 3.1 8B -> free GTX),
+ * streams contiguous translated prefixes live, and saves UTF-8 BOM `<title>.<lang>.srt`.
  */
 object SubtitleTranslator {
 
@@ -20,9 +29,87 @@ object SubtitleTranslator {
     private const val MODEL_FAST_FALLBACK = "llama-3.1-8b-instant"
     const val BATCH_SIZE = 35
 
+    data class LanguageSpec(
+        val code: String,
+        val code3: String,
+        val label: String,
+        val nativeName: String,
+        val aliases: List<String> = emptyList(),
+    )
+
+    val supportedLanguages: List<LanguageSpec> = listOf(
+        LanguageSpec("en", "eng", "English", "English"),
+        LanguageSpec("ta", "tam", "Tamil", "தமிழ்"),
+        LanguageSpec("hi", "hin", "Hindi", "हिन्दी"),
+        LanguageSpec("te", "tel", "Telugu", "తెలుగు"),
+        LanguageSpec("ml", "mal", "Malayalam", "മലയാളം"),
+        LanguageSpec("kn", "kan", "Kannada", "ಕನ್ನಡ"),
+        LanguageSpec("bn", "ben", "Bengali", "বাংলা"),
+        LanguageSpec("mr", "mar", "Marathi", "मराठी"),
+        LanguageSpec("pa", "pan", "Punjabi", "ਪੰਜਾਬੀ"),
+        LanguageSpec("gu", "guj", "Gujarati", "ગુજરાતી"),
+        LanguageSpec("ur", "urd", "Urdu", "اردو"),
+        LanguageSpec("es", "spa", "Spanish", "Español"),
+        LanguageSpec("fr", "fre", "French", "Français", listOf("fra")),
+        LanguageSpec("de", "ger", "German", "Deutsch", listOf("deu")),
+        LanguageSpec("it", "ita", "Italian", "Italiano"),
+        LanguageSpec("pt", "por", "Portuguese", "Português"),
+        LanguageSpec("ja", "jpn", "Japanese", "日本語", listOf("jp")),
+        LanguageSpec("ko", "kor", "Korean", "한국어"),
+        LanguageSpec("zh", "chi", "Chinese", "中文", listOf("zho", "zh-cn", "zh-tw", "mandarin")),
+        LanguageSpec("ar", "ara", "Arabic", "العربية"),
+        LanguageSpec("ru", "rus", "Russian", "Русский"),
+        LanguageSpec("tr", "tur", "Turkish", "Türkçe"),
+        LanguageSpec("vi", "vie", "Vietnamese", "Tiếng Việt"),
+        LanguageSpec("th", "tha", "Thai", "ไทย"),
+        LanguageSpec("id", "ind", "Indonesian", "Bahasa Indonesia"),
+        LanguageSpec("ms", "may", "Malay", "Bahasa Melayu", listOf("msa")),
+        LanguageSpec("nl", "dut", "Dutch", "Nederlands", listOf("nld")),
+        LanguageSpec("pl", "pol", "Polish", "Polski"),
+        LanguageSpec("uk", "ukr", "Ukrainian", "Українська"),
+        LanguageSpec("ro", "rum", "Romanian", "Română", listOf("ron")),
+        LanguageSpec("el", "gre", "Greek", "Ελληνικά", listOf("ell")),
+        LanguageSpec("sv", "swe", "Swedish", "Svenska"),
+        LanguageSpec("cs", "cze", "Czech", "Čeština", listOf("ces")),
+        LanguageSpec("hu", "hun", "Hungarian", "Magyar"),
+        LanguageSpec("fa", "per", "Persian", "فارسی", listOf("fas", "farsi")),
+        LanguageSpec("he", "heb", "Hebrew", "עברית", listOf("iw")),
+    )
+
     enum class TargetLanguage(val code: String, val label: String) {
         ENGLISH("en", "English"),
-        TAMIL("ta", "Tamil"),
+        TAMIL("ta", "Tamil");
+
+        fun toLanguageSpec(): LanguageSpec = findLanguage(code) ?: LanguageSpec(code, code, label, label)
+    }
+
+    fun defaultOwnLanguage(): LanguageSpec {
+        val sysCode = Locale.getDefault().language.trim().lowercase(Locale.ROOT)
+        val normalized = if (sysCode == "iw") "he" else sysCode
+        return supportedLanguages.firstOrNull { it.code == normalized } ?: supportedLanguages.first()
+    }
+
+    fun findLanguage(query: String?): LanguageSpec? {
+        val clean = query?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: return null
+        return supportedLanguages.firstOrNull { spec ->
+            spec.code.equals(clean, ignoreCase = true) ||
+                spec.code3.equals(clean, ignoreCase = true) ||
+                spec.label.equals(clean, ignoreCase = true) ||
+                spec.nativeName.equals(clean, ignoreCase = true) ||
+                spec.aliases.any { it.equals(clean, ignoreCase = true) }
+        }
+    }
+
+    fun matchesLanguage(trackLabel: String, langCode: String): Boolean {
+        val lower = trackLabel.lowercase(Locale.ROOT)
+        val spec = findLanguage(langCode) ?: return Regex("""(?:^|[^a-z])${Regex.escape(langCode.lowercase(Locale.ROOT))}(?:[^a-z]|$)""").containsMatchIn(lower)
+        if (lower.contains(spec.label.lowercase(Locale.ROOT)) || lower.contains(spec.nativeName.lowercase(Locale.ROOT))) {
+            return true
+        }
+        val tokens = listOf(spec.code, spec.code3) + spec.aliases
+        return tokens.any { tok ->
+            Regex("""(?:^|[^a-z0-9])${Regex.escape(tok.lowercase(Locale.ROOT))}(?:[^a-z0-9]|$)""").containsMatchIn(lower)
+        }
     }
 
     data class TranslationResult(
@@ -55,12 +142,20 @@ object SubtitleTranslator {
         model: String,
         batch: List<IndexedValue<PlaybackRules.SubtitleCue>>,
         target: TargetLanguage,
+    ): String = buildChatPayload(model, batch, target.toLanguageSpec())
+
+    fun buildChatPayload(
+        model: String,
+        batch: List<IndexedValue<PlaybackRules.SubtitleCue>>,
+        target: LanguageSpec,
     ): String {
-        val systemPrompt = when (target) {
-            TargetLanguage.TAMIL ->
+        val systemPrompt = when (target.code) {
+            "ta" ->
                 "You translate film subtitles into natural conversational Tamil. Keep tone and names accurate. Return ONLY a JSON array of objects with exact \"id\" and translated \"t\" strings, preserving item count and ids."
-            TargetLanguage.ENGLISH ->
+            "en" ->
                 "You translate film subtitles into natural idiomatic English. Preserve speaker meaning and concise subtitle pacing. Return ONLY a JSON array of objects with exact \"id\" and translated \"t\" strings, preserving item count and ids."
+            else ->
+                "You translate film subtitles into natural conversational ${target.label} (${target.nativeName}). Keep speaker meaning, tone, names, and concise subtitle pacing. Return ONLY a JSON array of objects with exact \"id\" and translated \"t\" strings, preserving item count and ids."
         }
         val itemsJson = batch.joinToString(",", prefix = "[", postfix = "]") { (id, cue) ->
             """{"id":$id,"t":"${OpenSubtitlesClient.escapeJson(cue.text.replace('\n', ' '))}"}"""
@@ -128,6 +223,28 @@ object SubtitleTranslator {
         isCancelled: (() -> Boolean)? = null,
         onProgress: ((String, Int) -> Unit)? = null,
         onPartialCues: ((List<PlaybackRules.SubtitleCue>) -> Unit)? = null,
+    ): TranslationResult = translateCues(
+        context = context,
+        cues = cues,
+        target = target.toLanguageSpec(),
+        videoTitle = videoTitle,
+        videoFile = videoFile,
+        groqKeyRaw = groqKeyRaw,
+        isCancelled = isCancelled,
+        onProgress = onProgress,
+        onPartialCues = onPartialCues,
+    )
+
+    fun translateCues(
+        context: Context,
+        cues: List<PlaybackRules.SubtitleCue>,
+        target: LanguageSpec,
+        videoTitle: String,
+        videoFile: File? = null,
+        groqKeyRaw: String = SpeechToTextClient.activeGroqKey(context),
+        isCancelled: (() -> Boolean)? = null,
+        onProgress: ((String, Int) -> Unit)? = null,
+        onPartialCues: ((List<PlaybackRules.SubtitleCue>) -> Unit)? = null,
     ): TranslationResult {
         val sourceCues = prepareCuesForTranslation(cues)
         if (sourceCues.isEmpty()) error("No subtitle text available to translate")
@@ -135,63 +252,118 @@ object SubtitleTranslator {
         val keys = SpeechToTextClient.parseApiKeys(groqKeyRaw)
         val indexed = sourceCues.withIndex().toList()
         val batches = indexed.chunked(BATCH_SIZE)
-        val translatedMap = LinkedHashMap<Int, String>(sourceCues.size)
-        val disabledKeys = HashSet<String>()
-        var usedFallback = false
+        val translatedMap = ConcurrentHashMap<Int, String>(sourceCues.size)
+        val disabledKeys = ConcurrentHashMap.newKeySet<String>()
+        val usedFallback = AtomicBoolean(false)
+        val completedBatches = AtomicInteger(0)
+        val batchDone = BooleanArray(batches.size)
+        val contiguousLock = Any()
+        var publishedPrefix = 0
 
-        batches.forEachIndexed { batchIdx, batch ->
-            if (isCancelled?.invoke() == true) error("Cancelled")
-            val pct = 8 + ((batchIdx.toDouble() / batches.size.coerceAtLeast(1)) * 84.0).toInt().coerceIn(0, 84)
-            onProgress?.invoke("Translating to ${target.label} (${batchIdx + 1}/${batches.size})...", pct)
+        val workerCount = minOf(if (keys.size > 1) 3 else 2, batches.size).coerceAtLeast(1)
+        val pool = Executors.newFixedThreadPool(workerCount)
+        val firstError = AtomicReference<Throwable?>(null)
+        val futures = ArrayList<Future<*>>(batches.size)
 
-            var resolved = emptyMap<Int, String>()
-            val expectedIds = batch.map { it.index }.toSet()
+        try {
+            batches.forEachIndexed { batchIdx, batch ->
+                futures += pool.submit {
+                    try {
+                        if (isCancelled?.invoke() == true || firstError.get() != null) return@submit
 
-            if (keys.isNotEmpty()) {
-                val activeKeys = keys.filter { it !in disabledKeys }
-                keyLoop@ for (kIdx in activeKeys.indices) {
-                    val key = activeKeys[(batchIdx + kIdx) % activeKeys.size]
-                    for (model in listOf(MODEL_PRIMARY, MODEL_FAST_FALLBACK)) {
-                        try {
-                            val responseContent = callGroqChat(key, buildChatPayload(model, batch, target))
-                            val parsed = parseTranslatedBatch(responseContent, expectedIds)
-                            if (parsed.size >= (batch.size * 0.7).toInt().coerceAtLeast(1)) {
-                                resolved = parsed
-                                break@keyLoop
-                            }
-                        } catch (e: Exception) {
-                            val msg = e.message?.lowercase(Locale.ROOT).orEmpty()
-                            if (msg.contains("401") || msg.contains("403")) {
-                                disabledKeys += key
-                                break
-                            }
-                            if (msg.contains("429") && model == MODEL_PRIMARY) {
-                                continue // Immediately drop to high-headroom 8b-instant before failing key
+                        var resolved = emptyMap<Int, String>()
+                        val expectedIds = batch.map { it.index }.toSet()
+
+                        if (keys.isNotEmpty()) {
+                            val activeKeys = keys.filter { it !in disabledKeys }
+                            keyLoop@ for (kIdx in activeKeys.indices) {
+                                if (isCancelled?.invoke() == true) return@submit
+                                val key = activeKeys[(batchIdx + kIdx) % activeKeys.size]
+                                for (model in listOf(MODEL_PRIMARY, MODEL_FAST_FALLBACK)) {
+                                    if (isCancelled?.invoke() == true) return@submit
+                                    try {
+                                        val responseContent = callGroqChat(key, buildChatPayload(model, batch, target))
+                                        val parsed = parseTranslatedBatch(responseContent, expectedIds)
+                                        if (parsed.size >= (batch.size * 0.7).toInt().coerceAtLeast(1)) {
+                                            resolved = parsed
+                                            break@keyLoop
+                                        }
+                                    } catch (e: Exception) {
+                                        val msg = e.message?.lowercase(Locale.ROOT).orEmpty()
+                                        if (msg.contains("401") || msg.contains("403")) {
+                                            disabledKeys += key
+                                            break
+                                        }
+                                        if (msg.contains("429") && model == MODEL_PRIMARY) {
+                                            continue // Immediately drop to high-headroom 8b-instant before failing key
+                                        }
+                                    }
+                                }
                             }
                         }
+
+                        if (resolved.size < batch.size && isCancelled?.invoke() != true) {
+                            val missing = batch.filter { it.index !in resolved }
+                            val gtxMap = runCatching { translateBatchWithGtx(missing, target) }.getOrDefault(emptyMap())
+                            if (gtxMap.isNotEmpty()) {
+                                usedFallback.set(true)
+                                resolved = resolved + gtxMap
+                            }
+                        }
+
+                        for ((id, cue) in batch) {
+                            val rawOut = resolved[id] ?: cue.text
+                            translatedMap[id] = balanceTranslatedLine(rawOut)
+                        }
+
+                        val done = completedBatches.incrementAndGet()
+                        val pct = 8 + ((done.toDouble() / batches.size.coerceAtLeast(1)) * 84.0).toInt().coerceIn(0, 84)
+                        onProgress?.invoke("Translating to ${target.label} ($done/${batches.size})...", pct)
+
+                        if (onPartialCues != null && batches.size > 1) {
+                            var shouldEmit = false
+                            synchronized(contiguousLock) {
+                                batchDone[batchIdx] = true
+                                var nextPrefix = publishedPrefix
+                                while (nextPrefix < batchDone.size && batchDone[nextPrefix]) {
+                                    nextPrefix++
+                                }
+                                if (nextPrefix > publishedPrefix && nextPrefix < batches.size) {
+                                    publishedPrefix = nextPrefix
+                                    shouldEmit = true
+                                }
+                            }
+                            if (shouldEmit) {
+                                onPartialCues.invoke(buildMergedCues(sourceCues, translatedMap))
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        firstError.compareAndSet(null, t)
                     }
                 }
             }
 
-            if (resolved.size < batch.size) {
-                val missing = batch.filter { it.index !in resolved }
-                val gtxMap = runCatching { translateBatchWithGtx(missing, target) }.getOrDefault(emptyMap())
-                if (gtxMap.isNotEmpty()) {
-                    usedFallback = true
-                    resolved = resolved + gtxMap
+            for (f in futures) {
+                while (true) {
+                    if (isCancelled?.invoke() == true) {
+                        futures.forEach { it.cancel(true) }
+                        error("Cancelled")
+                    }
+                    try {
+                        f.get(350, TimeUnit.MILLISECONDS)
+                        break
+                    } catch (_: TimeoutException) {
+                        // Keep polling until worker finishes or user cancels
+                    }
                 }
             }
-
-            for ((id, cue) in batch) {
-                val rawOut = resolved[id] ?: cue.text
-                translatedMap[id] = balanceTranslatedLine(rawOut)
-            }
-
-            if (batchIdx == 0 && batches.size > 1 && onPartialCues != null) {
-                val live = buildMergedCues(sourceCues, translatedMap)
-                onPartialCues.invoke(live)
-            }
+        } finally {
+            pool.shutdownNow()
+            runCatching { pool.awaitTermination(2, TimeUnit.SECONDS) }
         }
+
+        if (isCancelled?.invoke() == true) error("Cancelled")
+        firstError.get()?.let { throw it }
 
         val finalCues = buildMergedCues(sourceCues, translatedMap)
         onProgress?.invoke("Saving ${target.label} subtitles...", 95)
@@ -202,7 +374,7 @@ object SubtitleTranslator {
             videoFile = videoFile,
             langSuffix = target.code,
         )
-        val engine = if (keys.isNotEmpty() && !usedFallback) "Cloud (${target.label})" else "Cloud Translate (${target.label})"
+        val engine = if (keys.isNotEmpty() && !usedFallback.get()) "Cloud (${target.label})" else "Cloud Translate (${target.label})"
         return TranslationResult(finalCues, saved, engine)
     }
 
@@ -244,14 +416,15 @@ object SubtitleTranslator {
 
     private fun translateBatchWithGtx(
         batch: List<IndexedValue<PlaybackRules.SubtitleCue>>,
-        target: TargetLanguage,
+        target: LanguageSpec,
     ): Map<Int, String> {
         if (batch.isEmpty()) return emptyMap()
+        val gtxLang = if (target.code == "zh") "zh-CN" else target.code
         val out = LinkedHashMap<Int, String>(batch.size)
         // Translate small joined chunks with clear ASCII sentinel so timestamps remain invariant
         for (sub in batch.chunked(12)) {
             val joined = sub.joinToString("\n[[MS]]\n") { it.value.text.replace('\n', ' ') }
-            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target.code}&dt=t&q=${URLEncoder.encode(joined, "UTF-8")}"
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$gtxLang&dt=t&q=${URLEncoder.encode(joined, "UTF-8")}"
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 15000

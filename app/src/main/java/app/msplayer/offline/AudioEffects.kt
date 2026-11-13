@@ -14,7 +14,7 @@ data class AudioEffectSettings(
     val tenBandMode: Boolean = false,
 ) {
     private fun basePresetGains(): List<Float> = when (preset) {
-        "Clarity" -> listOf(-3f, -2f, -1f, 0f, 0f, 0f, 0f, 0f, -1f, -2f)
+        "Clarity" -> listOf(-2.5f, -1.5f, -0.5f, 0.5f, 1.5f, 2.5f, 3.5f, 4f, 3f, 1.5f)
         "Bass Boost" -> listOf(5f, 4f, 3f, 1f, 0f, -1f, -1f, 0f, 0f, 0f)
         "Treble Boost" -> listOf(0f, 0f, -1f, -1f, 0f, 1f, 2f, 3f, 4f, 4f)
         "Movie" -> listOf(3f, 2f, 0f, -1f, 1f, 3f, 2f, 1f, 2f, 2f)

@@ -47,6 +47,20 @@ object OpenSubtitlesClient {
         LanguageFilter("es", "spa", "Spanish"),
     )
 
+    fun allLanguageFilters(): List<LanguageFilter> =
+        listOf(LanguageFilter("", "all", "All")) +
+            SubtitleTranslator.supportedLanguages.map { spec ->
+                LanguageFilter(spec.code, spec.code3, spec.label)
+            }
+
+    fun filterForLanguage(code2: String): LanguageFilter {
+        val clean = code2.trim().lowercase(Locale.ROOT)
+        if (clean.isEmpty() || clean == "all") return LanguageFilter("", "all", "All")
+        return SubtitleTranslator.findLanguage(clean)
+            ?.let { LanguageFilter(it.code, it.code3, it.label) }
+            ?: LanguageFilter(clean, clean, clean.uppercase(Locale.ROOT))
+    }
+
     val subtitleExtensions = setOf("srt", "ass", "ssa", "vtt", "sub", "idx", "sup")
 
     data class SubtitleCandidate(

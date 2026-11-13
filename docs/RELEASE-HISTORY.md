@@ -1,3 +1,14 @@
+# MS PLAYER 0.6.6
+
+Offline, ad-free Android media player for iQOO Neo10R / Android 16. Package `app.msplayer.offline`; versionCode 13.
+
+## 0.6.6 Updates
+- **.pending Playback Fix**: Bypasses Android MediaProvider `SecurityException: Only owner is able to interact with pending/trashed item` by resolving underlying direct file paths via granted storage access, matching VLC and MX Player.
+- **YouTube-Style Double-Tap Seek Arc**: Replaced old floating capsule with an edge-docked frosted glass curved arc showing `>>` / `<<` and accumulated seconds (`30s`), with spring ripple expansion on rapid taps.
+- **Instant Folder Scanning & Fast Thumbnailing**: Removed `awaitIdle()` deadlocks from `Library.scan()` and `Library.thumbnail()`, preventing folders from hanging on "No media found" and Camera thumbnails from remaining stuck on hourglass icons. Prioritizes Android 29+ hardware-accelerated `contentResolver.loadThumbnail()` for instant rendering.
+- **Subtitle Panel Ergonomics**: Moved "Online Subtitles" button below the subtitle track list to avoid accidental mis-touches when selecting tracks.
+- **Top Bar on Pause/Stop**: Automatically reveals top bar controls on pause/stop, keeping them visible while paused until resumed.
+
 # MS PLAYER 0.4.0
 
 Offline, ad-free Android media player for iQOO Neo10R / Android 16. Package app.msplayer.offline; versionCode 5. LibVLC Android 3.7.7 is retained.
@@ -93,7 +104,7 @@ On first launch, choose **Allow media access**, **Open a file**, or **Choose a f
 - Background audio, media-session/notification controls, audio focus and picture-in-picture.
 - Android MediaStore/SAF access and external `content://` opening.
 
-All library and player processing is on the device. There are no ads, accounts or required servers, and no internet, camera, microphone, location or all-files-access permissions. The app writes its private history, settings, caches and selected-subtitle copies; it has no media deletion action.
+All library and player processing is on the device. There are no ads, accounts or required servers, and no internet, camera, microphone, location or all-files-access permissions. The app writes its private history, settings, caches and selected-subtitle copies; media deletion is available only from the library menu and always asks Android for confirmation.
 
 ## Tests
 
