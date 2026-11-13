@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -143,9 +144,12 @@ fun PlayerFeedbackOverlay(value: PlayerFeedback, modifier: Modifier = Modifier) 
         is PlayerFeedback.Speed -> SpeedFeedback(value.rate, value.changedAt, modifier)
         is PlayerFeedback.Seek -> {
             val pulse = remember { Animatable(1f) }
+            val chevronSlide = remember { Animatable(0f) }
             LaunchedEffect(value.tapCount, value.difference, value.side) {
-                pulse.snapTo(if (value.side != 0) 0.88f else 1.13f)
-                pulse.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 420f))
+                pulse.snapTo(if (value.side != 0) 0.84f else 1.13f)
+                chevronSlide.snapTo(if (value.side > 0) 10f else if (value.side < 0) -10f else 0f)
+                launch { pulse.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 420f)) }
+                launch { chevronSlide.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 380f)) }
             }
             if (value.side != 0) {
                 val isForward = value.side > 0
@@ -166,6 +170,7 @@ fun PlayerFeedbackOverlay(value: PlayerFeedback, modifier: Modifier = Modifier) 
                             .graphicsLayer {
                                 scaleX = pulse.value
                                 scaleY = pulse.value
+                                transformOrigin = TransformOrigin(if (isForward) 1f else 0f, 0.5f)
                             }
                             .clip(shape)
                             .frostedGlassChrome(
@@ -176,12 +181,12 @@ fun PlayerFeedbackOverlay(value: PlayerFeedback, modifier: Modifier = Modifier) 
                             )
                             .background(
                                 Brush.horizontalGradient(
-                                    if (isForward) listOf(Color.White.copy(alpha = 0.04f), Color.White.copy(alpha = 0.22f))
-                                    else listOf(Color.White.copy(alpha = 0.22f), Color.White.copy(alpha = 0.04f))
+                                    if (isForward) listOf(Color.White.copy(alpha = 0.04f), Color.White.copy(alpha = 0.24f))
+                                    else listOf(Color.White.copy(alpha = 0.24f), Color.White.copy(alpha = 0.04f))
                                 )
                             )
-                            .width(150.dp)
-                            .height(280.dp),
+                            .width(180.dp)
+                            .height(320.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
@@ -193,13 +198,17 @@ fun PlayerFeedbackOverlay(value: PlayerFeedback, modifier: Modifier = Modifier) 
                                 if (isForward) Icons.Default.FastForward else Icons.Default.FastRewind,
                                 contentDescription = if (isForward) "Fast Forward" else "Fast Rewind",
                                 tint = Color.White,
-                                modifier = Modifier.size(34.dp),
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .graphicsLayer {
+                                        translationX = chevronSlide.value
+                                    },
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 text = "${rawSec}s",
                                 color = Color.White,
-                                fontSize = 21.sp,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp,
                             )

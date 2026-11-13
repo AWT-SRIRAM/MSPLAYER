@@ -547,6 +547,9 @@ class MainActivity : ComponentActivity() {
         enableHighRefreshRate()
         if (showPlayer) service?.resumeVideoSurface()
         val nowAllFiles = hasAllFilesAccess()
+        if (service?.requiresAllFilesPermission?.value == true && nowAllFiles) {
+            service?.retryCurrent()
+        }
         if (wasRestricted || nowAllFiles != wasAllFilesGranted) reload(forceScan = nowAllFiles != wasAllFilesGranted)
         wasRestricted = !hasLibraryPermission()
         wasAllFilesGranted = nowAllFiles
@@ -1350,7 +1353,20 @@ private fun LibraryHome(
                                             groups.sortedByDescending { it.items.sumOf { i -> i.duration } }
                                         else -> groups.sortedBy { it.name.lowercase() }
                                     }
-                                if (folders.isEmpty()) AccessEmpty(activity)
+                                val isScanningLib by Library.isScanning.collectAsState()
+                                if (folders.isEmpty()) {
+                                    if (activity.scanning || isScanningLib) {
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                CircularProgressIndicator(color = palette.accent, modifier = Modifier.size(36.dp), strokeWidth = 3.dp)
+                                                Spacer(Modifier.height(14.dp))
+                                                Text("Scanning media library...", color = palette.textSecondary, fontSize = 15.sp)
+                                            }
+                                        }
+                                    } else {
+                                        AccessEmpty(activity)
+                                    }
+                                }
                                 else {
                                     val recentVideos = remember(activity.videos, hidden, dismissedRecent) {
                                         activity.videos
@@ -1368,6 +1384,11 @@ private fun LibraryHome(
                                         }
                                     }
                                     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = listBottomPad)) {
+                                        if (Build.VERSION.SDK_INT >= 30 && !activity.hasAllFilesAccess()) {
+                                            item(key = "all_files_banner") {
+                                                AllFilesAccessBanner(onGrant = { activity.openAllFilesAccessSettings() })
+                                            }
+                                        }
                                         item(key = "quick_actions") {
                                             Row(
                                                 Modifier.fillMaxWidth()
@@ -2470,6 +2491,51 @@ fun QuickAction(label: String, icon: ImageVector, action: () -> Unit) {
 }
 
 @Composable
+fun AllFilesAccessBanner(onGrant: () -> Unit) {
+    val glassEnabled by rememberGlassEnabled()
+    var dismissed by rememberSaveable { mutableStateOf(false) }
+    if (dismissed) return
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .frostedGlassChrome(
+                enabled = glassEnabled,
+                shape = RoundedCornerShape(16.dp),
+                tint = Color(0x3500B4D8),
+                fallbackColor = Color(0xFF102538),
+            )
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.FolderSpecial, null, tint = Cyan, modifier = Modifier.size(32.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Unlock In-Progress Downloads", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    "Grant All Files Access to play .pending downloads and browse all folders.",
+                    color = Color(0xFFB0C4DE),
+                    fontSize = 12.sp,
+                    lineHeight = 15.sp,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = onGrant,
+                colors = ButtonDefaults.buttonColors(containerColor = Cyan),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Enable", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+            }
+            IconButton(onClick = { dismissed = true }, modifier = Modifier.size(24.dp).padding(start = 4.dp)) {
+                Icon(Icons.Default.Close, null, tint = Color.LightGray.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
 fun AccessEmpty(activity: MainActivity) {
     val palette = LocalAppPalette.current
     BoxWithConstraints(
@@ -2562,9 +2628,9 @@ fun Thumbnail(item: MediaItem, modifier: Modifier, showDuration: Boolean = true)
             )
         }
             ?: Icon(
-                if (item.audio) Icons.Default.Headphones else if (loading) Icons.Default.HourglassEmpty else Icons.Default.Movie,
+                if (item.audio) Icons.Default.Headphones else Icons.Default.Movie,
                 null,
-                tint = palette.textSecondary,
+                tint = if (loading) palette.textSecondary.copy(alpha = 0.45f) else palette.textSecondary,
                 modifier = Modifier.size(32.dp),
             )
         if (showDuration && item.duration > 0)
@@ -3594,7 +3660,16 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
             Box(Modifier.fillMaxSize().videoGestures(
                 activity, service, locked, menu == null && !activity.inPip,
                 aspectOption.label, zoom, { zoom = it }, {
-                    controls = !controls; touched = SystemClock.uptimeMillis()
+                    if (!service.state.value.playing) {
+                        if (!controls) {
+                            controls = true
+                        } else {
+                            service.play()
+                        }
+                    } else {
+                        controls = !controls
+                    }
+                    touched = SystemClock.uptimeMillis()
                 }, { dragPosition = it }, { value ->
                     feedbackJob?.cancel()
                     feedback = value
@@ -3907,16 +3982,46 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
         if (state.buffering)
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = Accent)
         state.error?.let { error ->
+            val needsAllFiles by service.requiresAllFilesPermission.collectAsState()
+            val isStorageIssue = needsAllFiles ||
+                error.contains("pending", ignoreCase = true) ||
+                error.contains("Only owner", ignoreCase = true) ||
+                error.contains("All files access", ignoreCase = true)
             Column(
                 Modifier.align(Alignment.Center)
-                    .padding(30.dp)
-                    .frostedGlassChrome(glassEnabled, RoundedCornerShape(18.dp), fallbackColor = Panel)
+                    .padding(24.dp)
+                    .frostedGlassChrome(glassEnabled, RoundedCornerShape(18.dp), tint = Color(0x50101826), fallbackColor = Panel)
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(error, color = Color.White)
-                TextButton(onClick = { service.decoder("Software") }) {
-                    Text("Use SW decoder", color = Accent)
+                if (isStorageIssue) {
+                    Icon(Icons.Default.FolderSpecial, null, tint = Cyan, modifier = Modifier.size(38.dp))
+                    Spacer(Modifier.height(10.dp))
+                    Text("All Files Access Required", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Android requires 'All files access' permission to play in-progress downloads (.pending) and external files from Telegram or Chrome.",
+                        color = Color(0xFFD0D7E2),
+                        fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Button(
+                        onClick = { activity.openAllFilesAccessSettings() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Cyan),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.LockOpen, null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Grant All Files Access", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                } else {
+                    Text(error, color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Spacer(Modifier.height(10.dp))
+                    TextButton(onClick = { service.decoder("Software") }) {
+                        Text("Use SW decoder", color = Accent)
+                    }
                 }
                 TextButton(onClick = { activity.exitPlayer() }) { Text("Back", color = Color.LightGray) }
             }

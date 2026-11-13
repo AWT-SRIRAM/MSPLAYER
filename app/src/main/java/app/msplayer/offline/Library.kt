@@ -296,11 +296,13 @@ object Library {
         } finally { retriever.release() }
     }
     private val probes = Semaphore(2)
-    private val thumbSlots = Semaphore(3)
+    private val thumbSlots = Semaphore(8)
     val videoPlaybackActive = MutableStateFlow(false)
+    val isScanning = MutableStateFlow(false)
     private val thumbLocks = Array(32) { Mutex() }
     val thumbnailRevision = MutableStateFlow(0)
-    fun retryThumbnails() { thumbs.evictAll(); thumbnailRevision.value++ }
+    private val failedThumbs = LruCache<String, Boolean>(512)
+    fun retryThumbnails() { thumbs.evictAll(); failedThumbs.evictAll(); thumbnailRevision.value++ }
 
     suspend fun folderThumbnail(context: Context, folder: MediaFolder): Bitmap? {
         val rep = folder.items.filter { !it.audio }.maxByOrNull { it.added.takeIf { a -> a > 0 } ?: it.modified }
@@ -527,178 +529,187 @@ object Library {
 
     suspend fun scan(context: Context, audio: Boolean, forceFull: Boolean = false): List<MediaItem> =
         withContext(Dispatchers.IO) {
-            val lastEpoch = if (audio) lastAudioScanEpoch else lastVideoScanEpoch
-            val cached = if (audio) cachedAudio else cachedVideos
-            val base =
-                if (audio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            val projection =
-                mutableListOf("_id", "_display_name", "_size", "duration", "date_added", "date_modified", "_data")
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                projection += "relative_path"
-                projection += "is_pending"
-            }
-            if (!audio) projection += listOf("width", "height")
-
-            if (!forceFull && lastEpoch > 0L && cached.isNotEmpty()) {
-                val updated = ArrayList<MediaItem>()
-                try {
-                    queryCursorWithPending(
-                        context,
-                        base,
-                        projection.toTypedArray(),
-                        "date_modified > ?",
-                        arrayOf(lastEpoch.toString()),
-                        "date_added DESC",
-                    )?.use { cursor ->
-                        fun str(name: String) =
-                            cursor.getColumnIndex(name).let {
-                                if (it >= 0) cursor.getString(it) ?: "" else ""
-                            }
-                        fun num(name: String) =
-                            cursor.getColumnIndex(name).let {
-                                if (it >= 0) cursor.getLong(it) else 0L
-                            }
-                        while (cursor.moveToNext()) {
-                            val dataPath = str("_data")
-                            val isPending = if (android.os.Build.VERSION.SDK_INT >= 29) num("is_pending") == 1L else false
-                            val directFile = if (dataPath.isNotBlank()) java.io.File(dataPath) else null
-                            val itemUri = if (isPending && directFile?.canRead() == true) {
-                                Uri.fromFile(directFile).toString()
-                            } else {
-                                ContentUris.withAppendedId(base, num("_id")).toString()
-                            }
-                            val folder =
-                                if (android.os.Build.VERSION.SDK_INT >= 29)
-                                    str("relative_path").trimEnd('/').ifBlank { "Storage" }
-                                else
-                                    str("_data")
-                                        .substringBeforeLast('/')
-                                        .substringAfterLast('/')
-                                        .ifBlank { "Storage" }
-                            updated +=
-                                MediaItem(
-                                    itemUri,
-                                    str("_display_name"),
-                                    folder,
-                                    num("_size"),
-                                    num("duration"),
-                                    num("width").toInt(),
-                                    num("height").toInt(),
-                                    num("date_added"),
-                                    audio,
-                                    num("date_modified"),
-                                )
-                        }
-                    }
-                } catch (_: SecurityException) {
-                }
-
-                val currentIds = HashSet<String>()
-                try {
-                    queryCursorWithPending(context, base, arrayOf("_id"), null, null, null)?.use { cursor ->
-                        while (cursor.moveToNext()) {
-                            currentIds += ContentUris.withAppendedId(base, cursor.getLong(0)).toString()
-                        }
-                    }
-                } catch (_: SecurityException) {
-                }
-
-                val knownKeys = HashSet<String>(cached.size * 2)
-                cached.forEach {
-                    knownKeys += "${it.folder.lowercase(Locale.ROOT)}|${it.title.lowercase(Locale.ROOT)}|${it.size}"
-                }
-                updated.forEach {
-                    knownKeys += "${it.folder.lowercase(Locale.ROOT)}|${it.title.lowercase(Locale.ROOT)}|${it.size}"
-                }
-                val directExtra = scanDirectDiskMedia(audio, knownKeys)
-                val cachedDiskUris = cached.filter { it.uri.startsWith("file://") }.count {
-                    runCatching { java.io.File(Uri.parse(it.uri).path ?: "").exists() }.getOrDefault(false)
-                }
-                val cachedDiskCount = cached.count { it.uri.startsWith("file://") }
-
-                if (updated.isNotEmpty() || directExtra.isNotEmpty() ||
-                    cachedDiskUris != cachedDiskCount ||
-                    (currentIds.isNotEmpty() && currentIds.size != cached.count { !it.uri.startsWith("file://") })
-                ) {
-                    val updatedUris = updated.map { it.uri }.toSet()
-                    val keptCached = cached.filter { item ->
-                        if (item.uri.startsWith("file://")) {
-                            runCatching { java.io.File(Uri.parse(item.uri).path ?: "").exists() }.getOrDefault(false) &&
-                                item.uri !in updatedUris
-                        } else {
-                            item.uri !in updatedUris && item.uri in currentIds
-                        }
-                    }
-                    val merged = keptCached + updated + directExtra
-                    val result = merged.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
-                    val now = System.currentTimeMillis() / 1000L
-                    if (audio) { cachedAudio = result; lastAudioScanEpoch = now }
-                    else { cachedVideos = result; lastVideoScanEpoch = now }
-                    return@withContext result
-                } else if (currentIds.isNotEmpty()) {
-                    return@withContext cached
-                }
-            }
-
-            val items = ArrayList<MediaItem>()
-            val knownKeys = HashSet<String>()
+            isScanning.value = true
             try {
-                queryCursorWithPending(context, base, projection.toTypedArray(), null, null, "date_added DESC")
-                    ?.use { cursor ->
-                        fun str(name: String) =
-                            cursor.getColumnIndex(name).let {
-                                if (it >= 0) cursor.getString(it) ?: "" else ""
+                val lastEpoch = if (audio) lastAudioScanEpoch else lastVideoScanEpoch
+                val cached = if (audio) cachedAudio else cachedVideos
+                val base =
+                    if (audio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                val projection =
+                    mutableListOf("_id", "_display_name", "_size", "duration", "date_added", "date_modified", "_data")
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    projection += "relative_path"
+                    projection += "is_pending"
+                }
+                if (!audio) projection += listOf("width", "height")
+
+                if (!forceFull && lastEpoch > 0L && cached.isNotEmpty()) {
+                    val updated = ArrayList<MediaItem>()
+                    try {
+                        queryCursorWithPending(
+                            context,
+                            base,
+                            projection.toTypedArray(),
+                            "date_modified > ?",
+                            arrayOf(lastEpoch.toString()),
+                            "date_added DESC",
+                        )?.use { cursor ->
+                            fun str(name: String) =
+                                cursor.getColumnIndex(name).let {
+                                    if (it >= 0) cursor.getString(it) ?: "" else ""
+                                }
+                            fun num(name: String) =
+                                cursor.getColumnIndex(name).let {
+                                    if (it >= 0) cursor.getLong(it) else 0L
+                                }
+                            while (cursor.moveToNext()) {
+                                val dataPath = str("_data")
+                                val isPending = if (android.os.Build.VERSION.SDK_INT >= 29) num("is_pending") == 1L else false
+                                val directFile = if (dataPath.isNotBlank()) java.io.File(dataPath) else null
+                                val itemUri = if (isPending && directFile?.canRead() == true) {
+                                    Uri.fromFile(directFile).toString()
+                                } else {
+                                    ContentUris.withAppendedId(base, num("_id")).toString()
+                                }
+                                val folder =
+                                    if (android.os.Build.VERSION.SDK_INT >= 29)
+                                        str("relative_path").trimEnd('/').ifBlank { "Storage" }
+                                    else
+                                        str("_data")
+                                            .substringBeforeLast('/')
+                                            .substringAfterLast('/')
+                                            .ifBlank { "Storage" }
+                                updated +=
+                                    MediaItem(
+                                        itemUri,
+                                        str("_display_name"),
+                                        folder,
+                                        num("_size"),
+                                        num("duration"),
+                                        num("width").toInt(),
+                                        num("height").toInt(),
+                                        num("date_added"),
+                                        audio,
+                                        num("date_modified"),
+                                    )
                             }
-                        fun num(name: String) =
-                            cursor.getColumnIndex(name).let {
-                                if (it >= 0) cursor.getLong(it) else 0L
-                            }
-                        while (cursor.moveToNext()) {
-                            val dataPath = str("_data")
-                            val isPending = if (android.os.Build.VERSION.SDK_INT >= 29) num("is_pending") == 1L else false
-                            val directFile = if (dataPath.isNotBlank()) java.io.File(dataPath) else null
-                            val itemUri = if (isPending && directFile?.canRead() == true) {
-                                Uri.fromFile(directFile).toString()
-                            } else {
-                                ContentUris.withAppendedId(base, num("_id")).toString()
-                            }
-                            val title = str("_display_name")
-                            val size = num("_size")
-                            val folder =
-                                if (android.os.Build.VERSION.SDK_INT >= 29)
-                                    str("relative_path").trimEnd('/').ifBlank { "Storage" }
-                                else
-                                    dataPath
-                                        .substringBeforeLast('/')
-                                        .substringAfterLast('/')
-                                        .ifBlank { "Storage" }
-                            if (dataPath.isNotBlank()) knownKeys += dataPath
-                            knownKeys += "${folder.lowercase(Locale.ROOT)}|${title.lowercase(Locale.ROOT)}|${size}"
-                            items +=
-                                MediaItem(
-                                    itemUri,
-                                    title,
-                                    folder,
-                                    size,
-                                    num("duration"),
-                                    num("width").toInt(),
-                                    num("height").toInt(),
-                                    num("date_added"),
-                                    audio,
-                                    num("date_modified"),
-                                )
                         }
+                    } catch (_: SecurityException) {
                     }
-            } catch (_: SecurityException) {
-                /* Restricted access can expose only the granted subset. */
+
+                    val currentIds = HashSet<String>()
+                    try {
+                        queryCursorWithPending(context, base, arrayOf("_id"), null, null, null)?.use { cursor ->
+                            while (cursor.moveToNext()) {
+                                currentIds += ContentUris.withAppendedId(base, cursor.getLong(0)).toString()
+                            }
+                        }
+                    } catch (_: SecurityException) {
+                    }
+
+                    val knownKeys = HashSet<String>(cached.size * 2)
+                    cached.forEach {
+                        knownKeys += "${it.folder.lowercase(Locale.ROOT)}|${it.title.lowercase(Locale.ROOT)}|${it.size}"
+                    }
+                    updated.forEach {
+                        knownKeys += "${it.folder.lowercase(Locale.ROOT)}|${it.title.lowercase(Locale.ROOT)}|${it.size}"
+                    }
+                    val directExtra = if (android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()) {
+                        scanDirectDiskMedia(audio, knownKeys)
+                    } else emptyList()
+                    val cachedDiskUris = cached.filter { it.uri.startsWith("file://") }.count {
+                        runCatching { java.io.File(Uri.parse(it.uri).path ?: "").exists() }.getOrDefault(false)
+                    }
+                    val cachedDiskCount = cached.count { it.uri.startsWith("file://") }
+
+                    if (updated.isNotEmpty() || directExtra.isNotEmpty() ||
+                        cachedDiskUris != cachedDiskCount ||
+                        (currentIds.isNotEmpty() && currentIds.size != cached.count { !it.uri.startsWith("file://") })
+                    ) {
+                        val updatedUris = updated.map { it.uri }.toSet()
+                        val keptCached = cached.filter { item ->
+                            if (item.uri.startsWith("file://")) {
+                                runCatching { java.io.File(Uri.parse(item.uri).path ?: "").exists() }.getOrDefault(false) &&
+                                    item.uri !in updatedUris
+                            } else {
+                                item.uri !in updatedUris && item.uri in currentIds
+                            }
+                        }
+                        val merged = keptCached + updated + directExtra
+                        val result = merged.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
+                        val now = System.currentTimeMillis() / 1000L
+                        if (audio) { cachedAudio = result; lastAudioScanEpoch = now }
+                        else { cachedVideos = result; lastVideoScanEpoch = now }
+                        return@withContext result
+                    } else if (currentIds.isNotEmpty()) {
+                        return@withContext cached
+                    }
+                }
+
+                val items = ArrayList<MediaItem>()
+                val knownKeys = HashSet<String>()
+                try {
+                    queryCursorWithPending(context, base, projection.toTypedArray(), null, null, "date_added DESC")
+                        ?.use { cursor ->
+                            fun str(name: String) =
+                                cursor.getColumnIndex(name).let {
+                                    if (it >= 0) cursor.getString(it) ?: "" else ""
+                                }
+                            fun num(name: String) =
+                                cursor.getColumnIndex(name).let {
+                                    if (it >= 0) cursor.getLong(it) else 0L
+                                }
+                            while (cursor.moveToNext()) {
+                                val dataPath = str("_data")
+                                val isPending = if (android.os.Build.VERSION.SDK_INT >= 29) num("is_pending") == 1L else false
+                                val directFile = if (dataPath.isNotBlank()) java.io.File(dataPath) else null
+                                val itemUri = if (isPending && directFile?.canRead() == true) {
+                                    Uri.fromFile(directFile).toString()
+                                } else {
+                                    ContentUris.withAppendedId(base, num("_id")).toString()
+                                }
+                                val title = str("_display_name")
+                                val size = num("_size")
+                                val folder =
+                                    if (android.os.Build.VERSION.SDK_INT >= 29)
+                                        str("relative_path").trimEnd('/').ifBlank { "Storage" }
+                                    else
+                                        dataPath
+                                            .substringBeforeLast('/')
+                                            .substringAfterLast('/')
+                                            .ifBlank { "Storage" }
+                                if (dataPath.isNotBlank()) knownKeys += dataPath
+                                knownKeys += "${folder.lowercase(Locale.ROOT)}|${title.lowercase(Locale.ROOT)}|${size}"
+                                items +=
+                                    MediaItem(
+                                        itemUri,
+                                        title,
+                                        folder,
+                                        size,
+                                        num("duration"),
+                                        num("width").toInt(),
+                                        num("height").toInt(),
+                                        num("date_added"),
+                                        audio,
+                                        num("date_modified"),
+                                    )
+                            }
+                        }
+                } catch (_: SecurityException) {
+                    /* Restricted access can expose only the granted subset. */
+                }
+                if (android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()) {
+                    items += scanDirectDiskMedia(audio, knownKeys)
+                }
+                val sorted = items.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
+                val now = System.currentTimeMillis() / 1000L
+                if (audio) { cachedAudio = sorted; lastAudioScanEpoch = now }
+                else { cachedVideos = sorted; lastVideoScanEpoch = now }
+                sorted
+            } finally {
+                isScanning.value = false
             }
-            items += scanDirectDiskMedia(audio, knownKeys)
-            val sorted = items.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
-            val now = System.currentTimeMillis() / 1000L
-            if (audio) { cachedAudio = sorted; lastAudioScanEpoch = now }
-            else { cachedVideos = sorted; lastVideoScanEpoch = now }
-            sorted
         }
 
     fun sniff(context: Context, uri: Uri): String? = runCatching {
@@ -764,6 +775,7 @@ object Library {
     suspend fun thumbnail(context: Context, item: MediaItem): Bitmap? {
         if (item.audio || PlaybackRules.isStreamUrl(item.uri)) return null
         val key = "v4|${item.uri}|${item.size}|${item.modified}|${item.added}|${thumbnailRevision.value}"
+        if (failedThumbs.get(key) == true) return null
         return thumbLocks[(key.hashCode() and Int.MAX_VALUE) % thumbLocks.size].withLock {
             thumbs.get(key)?.let { return@withLock it }
             thumbSlots.withPermit {
@@ -771,9 +783,10 @@ object Library {
                     val directory = java.io.File(context.cacheDir, "video-thumbnails-v4").apply { mkdirs() }
                     val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
                     val disk = java.io.File(directory, "$digest.jpg")
-                    var found: Bitmap? = if (disk.isFile) android.graphics.BitmapFactory.decodeFile(disk.path) else null
-                    if (found != null) return@withContext found
+                    val foundDisk = if (disk.isFile && disk.length() > 0) android.graphics.BitmapFactory.decodeFile(disk.path) else null
+                    if (foundDisk != null) return@withContext foundDisk
 
+                    var found: Bitmap? = null
                     if (android.os.Build.VERSION.SDK_INT >= 29) {
                         val signal = android.os.CancellationSignal()
                         val cancellation = currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { signal.cancel() }
@@ -785,70 +798,70 @@ object Library {
                         } finally {
                             cancellation?.dispose()
                         }
-                        if (found != null && isDark(found!!)) {
-                            found!!.recycle()
-                            found = null
-                        }
                     }
 
                     if (found == null) {
-                        val retriever = MediaMetadataRetriever()
-                        try {
-                            val parsed = Uri.parse(item.uri)
-                            if (parsed.scheme == "file") {
-                                retriever.setDataSource(parsed.path)
-                            } else {
-                                try {
-                                    context.contentResolver.openFileDescriptor(parsed, "r")?.use { descriptor ->
-                                        retriever.setDataSource(descriptor.fileDescriptor)
+                        found = kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                            val retriever = MediaMetadataRetriever()
+                            try {
+                                val parsed = Uri.parse(item.uri)
+                                if (parsed.scheme == "file") {
+                                    retriever.setDataSource(parsed.path)
+                                } else {
+                                    try {
+                                        context.contentResolver.openFileDescriptor(parsed, "r")?.use { descriptor ->
+                                            retriever.setDataSource(descriptor.fileDescriptor)
+                                        }
+                                    } catch (_: Exception) {
+                                        retriever.setDataSource(context, parsed)
                                     }
-                                } catch (_: Exception) {
-                                    retriever.setDataSource(context, parsed)
                                 }
-                            }
-                            val duration = item.duration.takeIf { it > 0 } ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                            val sourceW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()?.coerceAtLeast(1) ?: 240
-                            val sourceH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.coerceAtLeast(1) ?: 135
-                            val outW = if (sourceW >= sourceH) 320 else (320f * sourceW / sourceH).toInt().coerceAtLeast(1)
-                            val outH = if (sourceH >= sourceW) 320 else (320f * sourceH / sourceW).toInt().coerceAtLeast(1)
-                            val times = listOf((duration / 10).coerceIn(1000, 30000), 1000L, 5000L).distinct()
-                            for (time in times) {
-                                currentCoroutineContext().ensureActive()
-                                val frame = if (android.os.Build.VERSION.SDK_INT >= 27)
-                                    retriever.getScaledFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
-                                else retriever.getFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
-                                    Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
+                                val duration = item.duration.takeIf { it > 0 } ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                                val sourceW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()?.coerceAtLeast(1) ?: 240
+                                val sourceH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.coerceAtLeast(1) ?: 135
+                                val outW = if (sourceW >= sourceH) 320 else (320f * sourceW / sourceH).toInt().coerceAtLeast(1)
+                                val outH = if (sourceH >= sourceW) 320 else (320f * sourceH / sourceW).toInt().coerceAtLeast(1)
+                                val times = listOf((duration / 10).coerceIn(1000, 30000), 1000L, 5000L).distinct()
+                                var extracted: Bitmap? = null
+                                for (time in times) {
+                                    currentCoroutineContext().ensureActive()
+                                    val frame = if (android.os.Build.VERSION.SDK_INT >= 27)
+                                        retriever.getScaledFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
+                                    else retriever.getFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
+                                        Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
+                                    }
+                                    if (frame != null) { extracted = frame; break }
                                 }
-                                if (frame != null && !isDark(frame)) { found = frame; break }
-                                frame?.recycle()
+                                extracted
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                null
+                            } finally {
+                                runCatching { retriever.release() }
                             }
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            /* Native fallback below. */
-                        } finally {
-                            retriever.release()
                         }
                     }
                     found
                 }
                 currentCoroutineContext().ensureActive()
-                if (bitmap == null) bitmap = NativeThumbnail.read(context, item)
-                bitmap?.let { image ->
-                    thumbs.put(key,image)
+                if (bitmap != null) {
+                    thumbs.put(key, bitmap)
                     withContext(Dispatchers.IO) {
-                        val directory=java.io.File(context.cacheDir,"video-thumbnails-v4").apply { mkdirs() }
-                        val digest=java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
-                        val target=java.io.File(directory,"$digest.jpg")
+                        val directory = java.io.File(context.cacheDir, "video-thumbnails-v4").apply { mkdirs() }
+                        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+                        val target = java.io.File(directory, "$digest.jpg")
                         runCatching {
-                            val temp=java.io.File(directory,"$digest.tmp")
-                            temp.outputStream().use { image.compress(Bitmap.CompressFormat.JPEG,85,it) }
-                            if(!temp.renameTo(target)) temp.delete()
-                            val files=directory.listFiles()?.filter { it.extension=="jpg" }?.sortedByDescending { it.lastModified() }.orEmpty()
-                            var total=0L
-                            files.forEach { total+=it.length(); if(total>48*1024*1024) it.delete() }
+                            val temp = java.io.File(directory, "$digest.tmp")
+                            temp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                            if (!temp.renameTo(target)) temp.delete()
+                            val files = directory.listFiles()?.filter { it.extension == "jpg" }?.sortedByDescending { it.lastModified() }.orEmpty()
+                            var total = 0L
+                            files.forEach { total += it.length(); if (total > 48 * 1024 * 1024) it.delete() }
                         }
                     }
+                } else {
+                    failedThumbs.put(key, true)
                 }
                 bitmap
             }
@@ -963,11 +976,78 @@ object Library {
             )
         }
 
-    fun resolvePathFile(context: Context, uri: Uri): java.io.File? {
+    fun findPhysicalMediaFile(item: MediaItem): java.io.File? {
+        val cleanStem = item.title.substringBeforeLast('.').trim()
+        val rawTitle = item.title.trim()
+        val extRoot = runCatching { android.os.Environment.getExternalStorageDirectory() }.getOrNull() ?: return null
+
+        val candidateDirs = buildList {
+            if (item.folder.isNotBlank() && item.folder != "Storage") {
+                if (item.folder.startsWith("/")) {
+                    add(java.io.File(item.folder))
+                } else {
+                    add(java.io.File(extRoot, item.folder))
+                }
+            }
+            listOf(
+                android.os.Environment.DIRECTORY_DOWNLOADS,
+                android.os.Environment.DIRECTORY_MOVIES,
+                android.os.Environment.DIRECTORY_DCIM,
+            ).forEach { dirName ->
+                runCatching { android.os.Environment.getExternalStoragePublicDirectory(dirName) }.getOrNull()?.let { add(it) }
+            }
+            add(java.io.File(extRoot, "Download/Telegram"))
+            add(java.io.File(extRoot, "Telegram"))
+            add(java.io.File(extRoot, "Telegram/Telegram Video"))
+            add(java.io.File(extRoot, "Movies/Telegram"))
+            add(java.io.File(extRoot, "DCIM/Camera"))
+        }.filter { it.exists() && it.isDirectory }.distinctBy { it.absolutePath }
+
+        for (dir in candidateDirs) {
+            val direct = java.io.File(dir, rawTitle)
+            if (direct.exists() && direct.canRead()) return direct
+
+            val files = runCatching { dir.listFiles() }.getOrNull() ?: continue
+            for (f in files) {
+                if (!f.isFile || !f.canRead()) continue
+                val fn = f.name
+                if (fn == rawTitle) return f
+                if (PlaybackRules.temporaryFile(fn)) {
+                    if (fn.contains(rawTitle) || (cleanStem.length >= 4 && fn.contains(cleanStem))) {
+                        return f
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    fun resolvePathFile(context: Context, uri: Uri, item: MediaItem? = null): java.io.File? {
         if (uri.scheme == "file") {
-            return uri.path?.let { java.io.File(it) }?.takeIf { it.exists() }
+            return uri.path?.let { java.io.File(it) }?.takeIf { it.exists() && it.canRead() }
         }
         if (uri.scheme == "content" && uri.authority == "media") {
+            runCatching {
+                val id = ContentUris.parseId(uri)
+                val isAudio = uri.toString().contains("audio")
+                val tableUri = if (isAudio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                queryCursorWithPending(
+                    context,
+                    tableUri,
+                    arrayOf(MediaStore.MediaColumns.DATA),
+                    "${MediaStore.MediaColumns._ID} = ?",
+                    arrayOf(id.toString()),
+                    null,
+                )?.use { c ->
+                    if (c.moveToFirst()) {
+                        val p = c.getString(0)
+                        if (!p.isNullOrBlank()) {
+                            val f = java.io.File(p)
+                            if (f.exists() && f.canRead()) return f
+                        }
+                    }
+                }
+            }
             runCatching {
                 queryCursorWithPending(
                     context,
@@ -981,13 +1061,17 @@ object Library {
                         val p = c.getString(0)
                         if (!p.isNullOrBlank()) {
                             val f = java.io.File(p)
-                            if (f.exists()) return f
+                            if (f.exists() && f.canRead()) return f
                         }
                     }
                 }
             }
         }
-        return uri.path?.let { java.io.File(it) }?.takeIf { it.exists() }
+        if (item != null) {
+            val candidate = findPhysicalMediaFile(item)
+            if (candidate != null && candidate.exists() && candidate.canRead()) return candidate
+        }
+        return uri.path?.let { java.io.File(it) }?.takeIf { it.exists() && it.canRead() }
     }
 
     fun buildDetailedInfo(

@@ -10,6 +10,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.*
+import android.provider.MediaStore
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.videolan.libvlc.LibVLC
@@ -69,6 +70,7 @@ class PlaybackService : Service() {
     val subtitleCuesRevision = MutableStateFlow(0)
     val subtitleDemuxing = MutableStateFlow(false)
     val autoSubStatus = MutableStateFlow<AutoSubStatus>(AutoSubStatus.Idle)
+    val requiresAllFilesPermission = MutableStateFlow(false)
     private var parsedCues: List<PlaybackRules.SubtitleCue> = emptyList()
     private val selectedSubTracks = LinkedHashSet<Int>()
     private var userModifiedSubtitles = false
@@ -1040,12 +1042,17 @@ class PlaybackService : Service() {
                             } catch (sec: SecurityException) {
                                 // Fallback for .pending / restricted MediaStore URIs where Android MediaProvider throws:
                                 // "Only owner is able to interact with pending/trashed item"
-                                val directFile = resolveLocalFile(uri)
-                                    ?: Library.resolvePathFile(this@PlaybackService, uri)
-                                    ?: java.io.File(item.folder, item.title).takeIf { it.exists() }
+                                val directFile = resolveLocalFile(uri, item)
+                                    ?: Library.resolvePathFile(this@PlaybackService, uri, item)
+                                    ?: Library.findPhysicalMediaFile(item)
                                 if (directFile != null && directFile.canRead()) {
                                     Media(vlc, directFile.absolutePath)
-                                } else throw sec
+                                } else {
+                                    if (android.os.Build.VERSION.SDK_INT >= 30 && !android.os.Environment.isExternalStorageManager()) {
+                                        requiresAllFilesPermission.value = true
+                                    }
+                                    throw sec
+                                }
                             }
                         } else Media(vlc, uri)
                     media.setHWDecoderEnabled(decoderMode != "Software", decoderMode == "Hardware")
@@ -1114,12 +1121,29 @@ class PlaybackService : Service() {
                 } catch (e: CancellationException) { throw e
                 } catch (e: Exception) {
                     Library.videoPlaybackActive.value = false
-                    state.value = PlayerState(item = item, error = if (PlaybackRules.temporaryFile(item.title))
+                    val isPendingOrSecurity = e is SecurityException ||
+                        e.message?.contains("pending", ignoreCase = true) == true ||
+                        e.message?.contains("Only owner", ignoreCase = true) == true ||
+                        PlaybackRules.temporaryFile(item.title)
+                    if (isPendingOrSecurity && android.os.Build.VERSION.SDK_INT >= 30 && !android.os.Environment.isExternalStorageManager()) {
+                        requiresAllFilesPermission.value = true
+                    }
+                    val errorMsg = if (requiresAllFilesPermission.value) {
+                        "All files access required to play in-progress downloads (.pending)."
+                    } else if (PlaybackRules.temporaryFile(item.title)) {
                         "This download is unavailable or still private to its downloader. Open a completed copy or choose an accessible folder."
-                        else "Cannot open file: ${e.message}")
+                    } else {
+                        "Cannot open file: ${e.message}"
+                    }
+                    state.value = PlayerState(item = item, error = errorMsg)
                     stopForeground(STOP_FOREGROUND_DETACH)
                 }
             }
+    }
+
+    fun retryCurrent(pos: Long? = null) {
+        requiresAllFilesPermission.value = false
+        openCurrent(pos ?: timeline.value.position, restore = false)
     }
 
     fun play() {
@@ -1772,11 +1796,32 @@ class PlaybackService : Service() {
         }
     }
 
-    private fun resolveLocalFile(uri: Uri): java.io.File? {
+    private fun resolveLocalFile(uri: Uri, item: MediaItem? = null): java.io.File? {
         if (uri.scheme == "file") {
-            return uri.path?.let { java.io.File(it) }?.takeIf { it.exists() }
+            return uri.path?.let { java.io.File(it) }?.takeIf { it.exists() && it.canRead() }
         }
         if (uri.scheme == "content" && uri.authority == "media") {
+            runCatching {
+                val id = ContentUris.parseId(uri)
+                val isAudio = uri.toString().contains("audio")
+                val tableUri = if (isAudio) MediaStore.Audio.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                Library.queryCursorWithPending(
+                    this,
+                    tableUri,
+                    arrayOf(MediaStore.MediaColumns.DATA),
+                    "${MediaStore.MediaColumns._ID} = ?",
+                    arrayOf(id.toString()),
+                    null,
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val path = cursor.getString(0)
+                        if (!path.isNullOrBlank()) {
+                            val file = java.io.File(path)
+                            if (file.exists() && file.canRead()) return file
+                        }
+                    }
+                }
+            }
             runCatching {
                 Library.queryCursorWithPending(
                     this,
@@ -1790,16 +1835,20 @@ class PlaybackService : Service() {
                         val path = cursor.getString(0)
                         if (!path.isNullOrBlank()) {
                             val file = java.io.File(path)
-                            if (file.exists()) return file
+                            if (file.exists() && file.canRead()) return file
                         }
                     }
                 }
             }
         }
+        if (item != null) {
+            val candidate = Library.findPhysicalMediaFile(item)
+            if (candidate != null && candidate.exists() && candidate.canRead()) return candidate
+        }
         val path = uri.path
         if (!path.isNullOrBlank()) {
             val file = java.io.File(path)
-            if (file.exists()) return file
+            if (file.exists() && file.canRead()) return file
         }
         return null
     }
