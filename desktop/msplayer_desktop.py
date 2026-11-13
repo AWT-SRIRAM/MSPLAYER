@@ -14,18 +14,36 @@ import time
 import json
 
 # Setup DLL directory for LibVLC on Windows
-VLC_DIR = r"C:\Program Files\VideoLAN\VLC"
-if os.path.exists(VLC_DIR):
-    try:
-        os.add_dll_directory(VLC_DIR)
-    except Exception:
-        pass
-    os.environ['PATH'] = VLC_DIR + os.pathsep + os.environ.get('PATH', '')
+app_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__)))
+possible_dirs = [
+    app_dir,
+    os.path.join(app_dir, "vlc"),
+    r"C:\Program Files\VideoLAN\VLC",
+    r"C:\Program Files (x86)\VideoLAN\VLC",
+]
 
-VLC_DLL = os.path.join(VLC_DIR, "libvlc.dll")
-if not os.path.exists(VLC_DLL):
-    print(f"Error: LibVLC not found at {VLC_DLL}")
+VLC_DIR = None
+VLC_DLL = None
+for candidate in possible_dirs:
+    dll_path = os.path.join(candidate, "libvlc.dll")
+    if os.path.exists(dll_path):
+        VLC_DIR = candidate
+        VLC_DLL = dll_path
+        break
+
+if not VLC_DLL:
+    import tkinter.messagebox as mb
+    mb.showerror(
+        "MS PLAYER - Engine Not Found",
+        "LibVLC video engine was not found.\n\nPlease install VLC Media Player (free from www.videolan.org) or run the MS PLAYER portable package."
+    )
     sys.exit(1)
+
+try:
+    os.add_dll_directory(VLC_DIR)
+except Exception:
+    pass
+os.environ['PATH'] = VLC_DIR + os.pathsep + os.environ.get('PATH', '')
 
 vlc = ctypes.CDLL(VLC_DLL)
 
@@ -639,3 +657,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
