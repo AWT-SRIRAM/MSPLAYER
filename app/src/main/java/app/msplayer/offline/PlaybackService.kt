@@ -1303,6 +1303,11 @@ class PlaybackService : Service() {
             PlaybackRules.AspectOption.ORIGINAL -> MediaPlayer.ScaleType.SURFACE_ORIGINAL
         }
         player.setVideoScale(scaleType)
+        when (option) {
+            PlaybackRules.AspectOption.RATIO_16_9 -> player.setAspectRatio("16:9")
+            PlaybackRules.AspectOption.RATIO_4_3 -> player.setAspectRatio("4:3")
+            else -> player.setAspectRatio(null)
+        }
     }
 
     fun decoder(mode: String) {
@@ -1625,7 +1630,11 @@ class PlaybackService : Service() {
             if (id in selectedSubTracks) {
                 selectedSubTracks.remove(id)
             } else {
-                selectedSubTracks.clear() // Single-track exclusive selection
+                if (selectedSubTracks.size >= 2) {
+                    val first = selectedSubTracks.first()
+                    selectedSubTracks.clear()
+                    selectedSubTracks.add(first)
+                }
                 selectedSubTracks.add(id)
             }
         }

@@ -565,7 +565,7 @@ fun TrackChoice(name: String, selected: Boolean, subtitle: Boolean = false, onCl
 fun AudioEffectsControls(service: PlaybackService) {
     val settings by service.effectSettings.collectAsState()
     val glassEnabled by rememberGlassEnabled()
-    var tab by remember { mutableIntStateOf(1) }
+    var tab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val manager = remember { context.getSystemService(AudioManager::class.java) }
     var outputs by remember { mutableStateOf("") }

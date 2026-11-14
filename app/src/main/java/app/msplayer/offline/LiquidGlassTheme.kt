@@ -204,12 +204,12 @@ object GlassTheme {
 }
 
 object MotionSpec {
-    val PressSpring = spring<Float>(dampingRatio = 0.68f, stiffness = 580f)
+    val PressSpring = spring<Float>(dampingRatio = 0.68f, stiffness = 900f)
     val AlphaSpring = spring<Float>(dampingRatio = 0.88f, stiffness = 500f)
-    val MorphSpring = spring<Float>(dampingRatio = 0.80f, stiffness = 460f)
-    val MorphRectSpring = spring<androidx.compose.ui.geometry.Rect>(dampingRatio = 0.82f, stiffness = 460f)
-    val PanelOffsetSpring = spring<IntOffset>(dampingRatio = 0.84f, stiffness = 480f)
-    val ItemPlacementSpring = spring<IntOffset>(dampingRatio = 0.82f, stiffness = 460f)
+    val MorphSpring = spring<Float>(dampingRatio = 0.80f, stiffness = 800f)
+    val MorphRectSpring = spring<androidx.compose.ui.geometry.Rect>(dampingRatio = 0.82f, stiffness = 800f)
+    val PanelOffsetSpring = spring<IntOffset>(dampingRatio = 0.84f, stiffness = 850f)
+    val ItemPlacementSpring = spring<IntOffset>(dampingRatio = 0.82f, stiffness = 800f)
     val DpSpring = spring<Dp>(dampingRatio = 0.78f, stiffness = 520f)
     val ColorSpring = spring<Color>(dampingRatio = 0.90f, stiffness = 360f)
 

@@ -835,17 +835,17 @@ object Library {
 
     suspend fun thumbnail(context: Context, item: MediaItem): Bitmap? {
         if (item.audio || PlaybackRules.isStreamUrl(item.uri)) return null
-        val key = "v4|${item.uri}|${item.size}|${item.modified}|${item.added}|${thumbnailRevision.value}"
+        val key = "v5|${item.uri}|${item.size}|${item.modified}|${item.added}|${thumbnailRevision.value}"
         if (failedThumbs.get(key) == true) return null
         return thumbLocks[(key.hashCode() and Int.MAX_VALUE) % thumbLocks.size].withLock {
             thumbs.get(key)?.let { return@withLock it }
             thumbSlots.withPermit {
                 var bitmap = withContext(Dispatchers.IO) {
-                    val directory = java.io.File(context.cacheDir, "video-thumbnails-v4").apply { mkdirs() }
+                    val directory = java.io.File(context.cacheDir, "video-thumbnails-v5").apply { mkdirs() }
                     val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
                     val disk = java.io.File(directory, "$digest.jpg")
                     val foundDisk = if (disk.isFile && disk.length() > 0) android.graphics.BitmapFactory.decodeFile(disk.path) else null
-                    if (foundDisk != null) return@withContext foundDisk
+                    if (foundDisk != null && !isDark(foundDisk)) return@withContext foundDisk
 
                     var found: Bitmap? = null
                     if (android.os.Build.VERSION.SDK_INT >= 29) {
@@ -853,16 +853,19 @@ object Library {
                         val cancellation = currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { signal.cancel() }
                         try {
                             val parsed = Uri.parse(item.uri)
-                            found = runCatching {
+                            val mediaStoreThumb = runCatching {
                                 context.contentResolver.loadThumbnail(parsed, android.util.Size(320, 180), signal)
                             }.getOrNull()
+                            if (mediaStoreThumb != null && !isDark(mediaStoreThumb)) {
+                                found = mediaStoreThumb
+                            }
                         } finally {
                             cancellation?.dispose()
                         }
                     }
 
-                    if (found == null) {
-                        found = kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                    if (found == null || isDark(found)) {
+                        val fallback = kotlinx.coroutines.withTimeoutOrNull(2000L) {
                             val retriever = MediaMetadataRetriever()
                             try {
                                 val parsed = Uri.parse(item.uri)
@@ -882,7 +885,7 @@ object Library {
                                 val sourceH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.coerceAtLeast(1) ?: 135
                                 val outW = if (sourceW >= sourceH) 320 else (320f * sourceW / sourceH).toInt().coerceAtLeast(1)
                                 val outH = if (sourceH >= sourceW) 320 else (320f * sourceH / sourceW).toInt().coerceAtLeast(1)
-                                val times = listOf((duration / 10).coerceIn(1000, 30000), 1000L, 5000L).distinct()
+                                val times = listOf((duration / 10).coerceIn(1000, 30000), 3000L, 5000L, 1000L).distinct()
                                 var extracted: Bitmap? = null
                                 for (time in times) {
                                     currentCoroutineContext().ensureActive()
@@ -891,7 +894,8 @@ object Library {
                                     else retriever.getFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
                                         Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
                                     }
-                                    if (frame != null) { extracted = frame; break }
+                                    if (frame != null && !isDark(frame)) { extracted = frame; break }
+                                    if (frame != null && extracted == null) { extracted = frame }
                                 }
                                 extracted
                             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -902,6 +906,9 @@ object Library {
                                 runCatching { retriever.release() }
                             }
                         }
+                        if (fallback != null) {
+                            found = fallback
+                        }
                     }
                     found
                 }
@@ -909,7 +916,7 @@ object Library {
                 if (bitmap != null) {
                     thumbs.put(key, bitmap)
                     withContext(Dispatchers.IO) {
-                        val directory = java.io.File(context.cacheDir, "video-thumbnails-v4").apply { mkdirs() }
+                        val directory = java.io.File(context.cacheDir, "video-thumbnails-v5").apply { mkdirs() }
                         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
                         val target = java.io.File(directory, "$digest.jpg")
                         runCatching {

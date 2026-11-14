@@ -49,6 +49,7 @@ fun Modifier.videoGestures(
     activity: MainActivity, service: PlaybackService, locked: Boolean, enabled: Boolean,
     aspect: String, zoom: Float, onZoom: (Float) -> Unit, onTap: () -> Unit,
     onDrag: (Long?) -> Unit, onFeedback: (PlayerFeedback?) -> Unit,
+    onPan: (Float, Float) -> Unit = { _, _ -> },
 ): Modifier {
     val zoomNow by rememberUpdatedState(zoom)
     val aspectNow by rememberUpdatedState(aspect)
@@ -56,6 +57,7 @@ fun Modifier.videoGestures(
     val feedbackNow by rememberUpdatedState(onFeedback)
     val dragNow by rememberUpdatedState(onDrag)
     val zoomCallback by rememberUpdatedState(onZoom)
+    val panCallback by rememberUpdatedState(onPan)
     return pointerInput(locked, enabled, service) {
         if (locked || !enabled) return@pointerInput
         var lastTap = 0L
@@ -113,8 +115,9 @@ fun Modifier.videoGestures(
                             feedbackNow(PlayerFeedback.SubtitleScale(currentSubScale.toInt()))
                         } else {
                             mode = 4
-                            gestureZoom = (gestureZoom * event.calculateZoom()).coerceIn(.5f, 3f)
-                            if (abs(gestureZoom - zoomNow) >= .03f) {
+                            val zoomFactor = event.calculateZoom()
+                            gestureZoom = (gestureZoom * zoomFactor).coerceIn(.5f, 4f)
+                            if (abs(gestureZoom - zoomNow) >= .01f) {
                                 zoomCallback(gestureZoom)
                                 val fillMode = aspectNow == PlaybackRules.AspectOption.CROP.label || aspectNow == PlaybackRules.AspectOption.STRETCH.label
                                 service.player.currentVideoTrack?.let { t ->
@@ -122,6 +125,9 @@ fun Modifier.videoGestures(
                                     service.player.setScale(PlaybackRules.videoScale(t.width * sar, t.height.toFloat(), size.width.toFloat(), size.height.toFloat(), gestureZoom, fillMode))
                                 }
                                 feedbackNow(PlayerFeedback.Zoom((gestureZoom * 100).toInt()))
+                            }
+                            if (pan != Offset.Zero) {
+                                panCallback(pan.x, pan.y)
                             }
                         }
                     } else {

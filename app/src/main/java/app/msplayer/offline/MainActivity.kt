@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
     var libraryError by mutableStateOf<String?>(null)
     var pendingStreamPrompt by mutableStateOf<String?>(null)
     private var bound = false
-    private var scanJob: Job? = null
+    var scanJob: Job? = null
     private var externalQueue = emptyList<MediaItem>()
     private var pendingUri: Uri? = null
     private var wasRestricted = true
@@ -746,12 +746,12 @@ class MainActivity : ComponentActivity() {
             else Manifest.permission.READ_EXTERNAL_STORAGE,
         ) == PackageManager.PERMISSION_GRANTED || hasAllFilesAccess()
 
-    fun reload(forceScan: Boolean = false) {
-        if (!forceScan && scanJob?.isActive == true) return
+    fun reload(forceScan: Boolean = false): Job? {
+        if (!forceScan && scanJob?.isActive == true) return scanJob
         scanJob?.cancel()
-        scanJob =
+        val job =
             lifecycleScope.launch {
-                if (videos.isEmpty()) scanning = true
+                if (videos.isEmpty() || forceScan) scanning = true
                 libraryError = null
                 try {
                     if (forceScan) {
@@ -777,6 +777,8 @@ class MainActivity : ComponentActivity() {
                     scanning = false
                 }
             }
+        scanJob = job
+        return job
     }
 
     private suspend fun scanTree(tree: Uri): List<MediaItem> =
@@ -1310,6 +1312,13 @@ private fun LibraryHome(
                             val pullHaptics = LocalHapticFeedback.current
                             val pullDensity = LocalDensity.current
                             var pullHapticFired by remember { mutableStateOf(false) }
+                            LaunchedEffect(activity.scanning) {
+                                if (!activity.scanning && manualRefreshing) {
+                                    manualRefreshing = false
+                                    runCatching { pullState.animateToHidden() }
+                                    onBumpRefresh()
+                                }
+                            }
                             LaunchedEffect(pullState.distanceFraction) {
                                 if (pullState.distanceFraction >= 1f && !pullHapticFired) {
                                     pullHapticFired = true
@@ -1332,8 +1341,13 @@ private fun LibraryHome(
                                         threshold = 34.dp,
                                         onRefresh = {
                                             manualRefreshing = true
-                                            activity.reload(forceScan = true)
-                                            onBumpRefresh()
+                                            scope.launch {
+                                                activity.reload(forceScan = true)
+                                                activity.scanJob?.join()
+                                                manualRefreshing = false
+                                                runCatching { pullState.animateToHidden() }
+                                                onBumpRefresh()
+                                            }
                                         },
                                     )
                             ) {
@@ -2640,7 +2654,7 @@ fun Thumbnail(item: MediaItem, modifier: Modifier, showDuration: Boolean = true)
     var loading by remember(item.uri, revision) { mutableStateOf(true) }
     LaunchedEffect(item.uri, item.size, item.modified, item.added, revision) {
         loading = true
-        bitmap = Library.thumbnail(context, item)
+        bitmap = withTimeoutOrNull(2500L) { Library.thumbnail(context, item) }
         loading = false
     }
     Box(
@@ -2682,7 +2696,7 @@ fun FolderThumbnail(entry: MediaFolder, modifier: Modifier = Modifier) {
     val palette = LocalAppPalette.current
     var bitmap by remember(entry.name, entry.items.size) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(entry.name, entry.items.size) {
-        bitmap = Library.folderThumbnail(context, entry)
+        bitmap = withTimeoutOrNull(2500L) { Library.folderThumbnail(context, entry) }
     }
     Box(
         modifier.clip(RoundedCornerShape(6.dp)).background(if (palette.isLight) Color(0xFFDCE3EE) else Color(0xFF1E232B)),
@@ -3589,6 +3603,8 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
     var subtitleStyle by remember { mutableStateOf(SubtitleStyle.load(activity)) }
     var feedback by remember { mutableStateOf<PlayerFeedback?>(null) }
     var zoom by remember { mutableFloatStateOf(1f) }
+    var panX by remember { mutableFloatStateOf(0f) }
+    var panY by remember { mutableFloatStateOf(0f) }
     val aspectOption by service.aspectMode.collectAsState()
     val sleepMode by service.sleepTimerMode.collectAsState()
     val sleepRemaining by service.sleepTimerRemainingMs.collectAsState()
@@ -3596,6 +3612,16 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
     var dragPosition by remember { mutableStateOf<Long?>(null) }
     var attachedLayout by remember { mutableStateOf<VLCVideoLayout?>(null) }
     val latest by rememberUpdatedState(state)
+    LaunchedEffect(state.item?.uri) {
+        zoom = 1f
+        panX = 0f
+        panY = 0f
+    }
+    LaunchedEffect(aspectOption) {
+        zoom = 1f
+        panX = 0f
+        panY = 0f
+    }
     LaunchedEffect(state.item?.uri, state.videoWidth, state.videoHeight, activity.inPip) { activity.videoOrientation(state) }
     LaunchedEffect(state.item?.uri, state.videoWidth, state.videoHeight, state.playing, activity.showPlayer, activity.pipSourceRect) {
         activity.updatePipParams()
@@ -3621,7 +3647,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
         feedbackJob?.cancel()
         feedbackJob =
             scope.launch {
-                delay(1200)
+                delay(650L)
                 feedback = null
             }
     }
@@ -3632,7 +3658,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
     }
     LaunchedEffect(touched, state.playing, menu, locked) {
         if (state.playing && menu == null && !locked) {
-            delay(4000)
+            delay(2500)
             controls = false
         }
     }
@@ -3657,6 +3683,13 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
             factory = { context -> VLCVideoLayout(context).also { attachedLayout = it; service.attachVideo(it) } },
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                    translationX = panX
+                    translationY = panY
+                    clip = false
+                }
                 .onGloballyPositioned { coords ->
                     val b = coords.boundsInWindow()
                     if (b.width > 0f && b.height > 0f) {
@@ -3699,14 +3732,20 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                                 showUnlockPrompt = true
                                 unlockTimerJob?.cancel()
                                 unlockTimerJob = scope.launch {
-                                    delay(2800L)
+                                    delay(1800L)
                                     showUnlockPrompt = false
                                 }
                             }
                         } else {
                             Modifier.videoGestures(
                                 activity, service, locked, menu == null && !activity.inPip,
-                                aspectOption.label, zoom, { zoom = it }, {
+                                aspectOption.label, zoom, { z ->
+                                    zoom = z
+                                    if (z <= 1.02f) {
+                                        panX = 0f
+                                        panY = 0f
+                                    }
+                                }, {
                                     if (!service.state.value.playing) {
                                         if (!controls) {
                                             controls = true
@@ -3722,11 +3761,17 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                                     feedback = value
                                     if (value != null && value !is PlayerFeedback.Speed) {
                                         feedbackJob = scope.launch {
-                                            delay(if (value is PlayerFeedback.Seek) 1100L else 700L)
+                                            delay(650L)
                                             feedback = null
                                         }
                                     }
-                                }
+                                },
+                                onPan = { dx, dy ->
+                                    if (zoom > 1.02f) {
+                                        panX += dx
+                                        panY += dy
+                                    }
+                                },
                             )
                         }
                     )
@@ -4157,7 +4202,9 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Spacer(Modifier.width(10.dp))
                             Text("Open (.srt / .zip)")
                         }
-
+                        if (state.selectedSubtitleTracks.size > 1) {
+                            Badge("${state.selectedSubtitleTracks.size} active", color = Color(0xFF1976D2))
+                        }
                     }
                     val validSubs = state.subtitles.filter { it.first >= 0 }
                     val favLangs = remember(menu) { Store.favoriteSubtitleLanguages(context) }
@@ -4186,7 +4233,14 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Column {
                                 sortedSubs.forEach { (id, name) ->
                                     val isSelected = id in state.selectedSubtitleTracks
-                                    TrackChoice(name, isSelected, subtitle = true) {
+                                    val isPrimary = state.selectedSubtitleTracks.firstOrNull() == id
+                                    val isSecondary = state.selectedSubtitleTracks.drop(1).firstOrNull() == id
+                                    val label = when {
+                                        state.selectedSubtitleTracks.size > 1 && isPrimary -> "$name (Primary)"
+                                        state.selectedSubtitleTracks.size > 1 && isSecondary -> "$name (Secondary)"
+                                        else -> name
+                                    }
+                                    TrackChoice(label, isSelected, subtitle = true) {
                                         service.toggleSubtitleTrack(id, name)
                                     }
                                 }
@@ -4265,6 +4319,32 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Text("Instant Sync (Heard Line Now)")
                         }
                         TextButton(onClick = { openPlayerMenu("Subtitle appearance") }) { Text("Appearance") }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val updated = subtitleStyle.copy(secondaryTop = !subtitleStyle.secondaryTop)
+                                    subtitleStyle = updated
+                                    service.subtitleStyle(updated)
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = subtitleStyle.secondaryTop,
+                                onCheckedChange = { checked ->
+                                    val updated = subtitleStyle.copy(secondaryTop = checked)
+                                    subtitleStyle = updated
+                                    service.subtitleStyle(updated)
+                                },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = Color(0xFF2196F3),
+                                    uncheckedColor = Color.White.copy(alpha = 0.6f),
+                                ),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Top dock (2nd sub)", color = Color.White, fontSize = 14.sp)
+                        }
                     }
                 }
                 "Audio effects" -> AudioEffectsControls(service)
@@ -5824,7 +5904,19 @@ fun TranslateSubtitlesDialog(
                                 )
                             }
 
-
+                            Text("Display Mode", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = !dualMode,
+                                    onClick = { dualMode = false },
+                                    label = { Text("Replace track", fontSize = 12.sp) },
+                                )
+                                FilterChip(
+                                    selected = dualMode,
+                                    onClick = { dualMode = true },
+                                    label = { Text("Dual subtitles", fontSize = 12.sp) },
+                                )
+                            }
                         }
 
                         when (val currentStatus = subStatus) {
