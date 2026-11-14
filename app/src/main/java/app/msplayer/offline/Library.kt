@@ -852,7 +852,6 @@ object Library {
     suspend fun thumbnail(context: Context, item: MediaItem): Bitmap? {
         if (item.audio || PlaybackRules.isStreamUrl(item.uri)) return null
         val key = "v5|${item.uri}|${item.size}|${item.modified}|${item.added}|${thumbnailRevision.value}"
-        if (failedThumbs.get(key) == true) return null
         return thumbLocks[(key.hashCode() and Int.MAX_VALUE) % thumbLocks.size].withLock {
             thumbs.get(key)?.let { return@withLock it }
             thumbSlots.withPermit {
@@ -880,23 +879,47 @@ object Library {
                         }
                     }
 
+                    if ((found == null || isDark(found)) && item.uri.startsWith("content://")) {
+                        runCatching {
+                            val id = item.uri.substringAfterLast('/').toLongOrNull()
+                            if (id != null) {
+                                @Suppress("DEPRECATION")
+                                val msThumb = MediaStore.Video.Thumbnails.getThumbnail(
+                                    context.contentResolver,
+                                    id,
+                                    MediaStore.Video.Thumbnails.MINI_KIND,
+                                    null,
+                                )
+                                if (msThumb != null && !isDark(msThumb)) {
+                                    found = msThumb
+                                }
+                            }
+                        }
+                    }
+
                     if (found == null || isDark(found)) {
-                        val fallback = kotlinx.coroutines.withTimeoutOrNull(2500L) {
+                        val fallback = kotlinx.coroutines.withTimeoutOrNull(3000L) {
                             val retriever = MediaMetadataRetriever()
+                            var pfd: android.os.ParcelFileDescriptor? = null
                             try {
                                 val parsed = Uri.parse(item.uri)
-                                if (parsed.scheme == "file") {
-                                    retriever.setDataSource(parsed.path)
-                                } else {
-                                    try {
-                                        context.contentResolver.openFileDescriptor(parsed, "r")?.use { descriptor ->
-                                            retriever.setDataSource(descriptor.fileDescriptor)
-                                        }
-                                    } catch (_: Exception) {
+                                val directFile = if (parsed.scheme == "file") java.io.File(parsed.path ?: "")
+                                    else findPhysicalMediaFile(item) ?: resolvePathFile(context, parsed, item)
+                                if (directFile != null && directFile.canRead()) {
+                                    retriever.setDataSource(directFile.absolutePath)
+                                } else if (parsed.scheme == "content") {
+                                    pfd = runCatching { context.contentResolver.openFileDescriptor(parsed, "r") }.getOrNull()
+                                    if (pfd != null) {
+                                        retriever.setDataSource(pfd.fileDescriptor)
+                                    } else {
                                         retriever.setDataSource(context, parsed)
                                     }
+                                } else {
+                                    retriever.setDataSource(context, parsed)
                                 }
-                                val duration = item.duration.takeIf { it > 0 } ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                                val duration = item.duration.takeIf { it > 0 }
+                                    ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                                    ?: 0L
                                 val sourceW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()?.coerceAtLeast(1) ?: 240
                                 val sourceH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.coerceAtLeast(1) ?: 135
                                 val outW = if (sourceW >= sourceH) 320 else (320f * sourceW / sourceH).toInt().coerceAtLeast(1)
@@ -924,6 +947,7 @@ object Library {
                                 null
                             } finally {
                                 runCatching { retriever.release() }
+                                runCatching { pfd?.close() }
                             }
                         }
                         if (fallback != null) {
@@ -945,8 +969,6 @@ object Library {
                             if (!temp.renameTo(target)) temp.delete()
                         }
                     }
-                } else {
-                    failedThumbs.put(key, true)
                 }
                 bitmap
             }

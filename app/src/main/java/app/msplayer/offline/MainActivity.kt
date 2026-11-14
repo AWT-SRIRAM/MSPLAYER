@@ -3982,7 +3982,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                                 exit = slideOutVertically(tween(160)) { it / 2 },
                             )
                             .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .5f), Color.Black.copy(alpha = .9f))))
-                            .padding(top = 8.dp)
+                            .padding(top = 0.dp)
                     ) {
                         PlayerTimeline(
                             service = service,
@@ -3992,7 +3992,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             onOpenChapters = { openPlayerMenu("Chapters") },
                         )
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             val lockSrc = remember { MutableInteractionSource() }
@@ -4873,6 +4873,7 @@ fun OnlineSubtitlesDialog(
     var searching by remember { mutableStateOf(false) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var pendingExternalUrl by remember { mutableStateOf<String?>(null) }
     val hasAnySubKey = remember {
         OpenSubtitlesClient.activeApiKey(context).isNotBlank() ||
             OnlineSubtitlesClient.activeSubDlKey(context).isNotBlank() ||
@@ -4946,22 +4947,22 @@ fun OnlineSubtitlesDialog(
     ) {
         ImmersivePlayerDialog()
         BoxWithConstraints(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
-            val maxH = (maxHeight - 16.dp).coerceAtLeast(250.dp)
+            val dialogWidth = if (maxWidth > 650.dp) (maxWidth * 0.94f).coerceAtMost(880.dp) else (maxWidth - 20.dp)
+            val dialogHeight = (maxHeight * 0.90f).coerceAtLeast(300.dp)
             Column(
                 Modifier
-                    .widthIn(min = 320.dp, max = 580.dp)
-                    .heightIn(max = maxH)
-                    .fillMaxWidth()
+                    .width(dialogWidth)
+                    .height(dialogHeight)
                     .frostedGlassChrome(
                         enabled = glassEnabled,
                         shape = RoundedCornerShape(if (glassEnabled) 22.dp else 12.dp),
                         tint = Color(0xCC0B121D),
                         fallbackColor = Color(0xFF1B1F26),
                     )
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
@@ -5086,8 +5087,7 @@ fun OnlineSubtitlesDialog(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
                                         onClick = {
-                                            val url = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
-                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                            pendingExternalUrl = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Cyan.copy(alpha = 0.22f), contentColor = Cyan),
                                         shape = RoundedCornerShape(8.dp),
@@ -5099,8 +5099,7 @@ fun OnlineSubtitlesDialog(
                                     Button(
                                         onClick = {
                                             val q = java.net.URLEncoder.encode("$query subtitles", "UTF-8")
-                                            val url = "https://github.com/search?q=$q&type=repositories"
-                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                            pendingExternalUrl = "https://github.com/search?q=$q&type=repositories"
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.12f), contentColor = Color.White),
                                         shape = RoundedCornerShape(8.dp),
@@ -5117,6 +5116,47 @@ fun OnlineSubtitlesDialog(
                     visibleCandidates.forEach { cand ->
                         val itemSrc = remember(cand.id) { MutableInteractionSource() }
                         val isBusy = downloadingId == cand.id
+                        fun triggerDownload() {
+                            if (downloadingId != null) return
+                            downloadingId = cand.id
+                            errorMsg = null
+                            scope.launch {
+                                val res = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        OnlineSubtitlesClient.downloadCandidate(
+                                            context = context,
+                                            candidate = cand,
+                                            videoTitle = currentItem?.title ?: query,
+                                            videoFile = service.currentLocalMediaFile(),
+                                        )
+                                    }
+                                }
+                                downloadingId = null
+                                res.fold(
+                                    { dl ->
+                                        val itemUri = currentItem?.uri
+                                        var loaded = false
+                                        dl.allExtracted.take(5).forEachIndexed { idx, file ->
+                                            if (service.addSubtitle(file.absolutePath, selectExtra = idx == 0)) {
+                                                loaded = true
+                                                if (itemUri != null) {
+                                                    service.rememberImportedSubtitle(itemUri, file.absolutePath)
+                                                }
+                                            }
+                                        }
+                                        if (loaded) {
+                                            activity.toast("Loaded ${dl.file.name}")
+                                            onDismiss()
+                                        } else {
+                                            errorMsg = "Could not load ${dl.file.name}"
+                                        }
+                                    },
+                                    { err ->
+                                        errorMsg = err.message ?: "Download failed"
+                                    },
+                                )
+                            }
+                        }
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -5124,7 +5164,7 @@ fun OnlineSubtitlesDialog(
                                 .background(Color.White.copy(alpha = 0.06f))
                                 .border(
                                     0.7.dp,
-                                    Color.White.copy(alpha = if (cand.hashMatch) 0.45f else 0.14f),
+                                    Color.White.copy(alpha = if (cand.hashMatch) 0.55f else 0.14f),
                                     RoundedCornerShape(10.dp),
                                 )
                                 .iosLiquidPress(itemSrc, enabled = downloadingId == null, scaleDown = 0.98f)
@@ -5133,44 +5173,7 @@ fun OnlineSubtitlesDialog(
                                     indication = ripple(),
                                     enabled = downloadingId == null,
                                 ) {
-                                    downloadingId = cand.id
-                                    errorMsg = null
-                                    scope.launch {
-                                        val res = withContext(Dispatchers.IO) {
-                                            runCatching {
-                                                OnlineSubtitlesClient.downloadCandidate(
-                                                    context = context,
-                                                    candidate = cand,
-                                                    videoTitle = currentItem?.title ?: query,
-                                                    videoFile = service.currentLocalMediaFile(),
-                                                )
-                                            }
-                                        }
-                                        downloadingId = null
-                                        res.fold(
-                                            { dl ->
-                                                val itemUri = currentItem?.uri
-                                                var loaded = false
-                                                dl.allExtracted.take(5).forEachIndexed { idx, file ->
-                                                    if (service.addSubtitle(file.absolutePath, selectExtra = idx == 0)) {
-                                                        loaded = true
-                                                        if (itemUri != null) {
-                                                            service.rememberImportedSubtitle(itemUri, file.absolutePath)
-                                                        }
-                                                    }
-                                                }
-                                                if (loaded) {
-                                                    activity.toast("Loaded ${dl.file.name}")
-                                                    onDismiss()
-                                                } else {
-                                                    errorMsg = "Could not load ${dl.file.name}"
-                                                }
-                                            },
-                                            { err ->
-                                                errorMsg = err.message ?: "Download failed"
-                                            },
-                                        )
-                                    }
+                                    triggerDownload()
                                 }
                                 .padding(horizontal = 12.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -5186,16 +5189,30 @@ fun OnlineSubtitlesDialog(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    if (cand.hashMatch) Badge("Exact Match", color = Color(0xFF00796B))
                                     Badge(cand.provider.badge, color = Color(0xFF283546))
                                     if (cand.language.isNotBlank()) Badge(cand.language, color = Color(0xFF1976D2))
                                     if (cand.hearingImpaired) Badge("HI")
                                     if (cand.downloadCount > 0) Text("${cand.downloadCount} dl", color = Muted, fontSize = 11.sp)
                                 }
                             }
-                            if (isBusy) {
-                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Accent)
-                            } else {
-                                Icon(Icons.Default.Download, "Download & load", tint = Cyan, modifier = Modifier.size(20.dp))
+                            Button(
+                                onClick = { triggerDownload() },
+                                enabled = downloadingId == null,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (cand.hashMatch) Cyan else Cyan.copy(alpha = 0.22f),
+                                    contentColor = if (cand.hashMatch) Color.Black else Cyan,
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            ) {
+                                if (isBusy) {
+                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = if (cand.hashMatch) Color.Black else Cyan)
+                                } else {
+                                    Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Download", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }
@@ -5208,12 +5225,7 @@ fun OnlineSubtitlesDialog(
                 ) {
                     TextButton(
                         onClick = {
-                            val url = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                            }.onFailure {
-                                activity.toast("No browser app found")
-                            }
+                            pendingExternalUrl = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp),
                     ) {
@@ -5227,6 +5239,60 @@ fun OnlineSubtitlesDialog(
                 }
             }
         }
+    }
+    pendingExternalUrl?.let { targetUrl ->
+        AlertDialog(
+            onDismissRequest = { pendingExternalUrl = null },
+            title = {
+                Text(
+                    "Open External Link?",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "You will be redirected to an external website in your browser:",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        targetUrl,
+                        color = Cyan,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                            .padding(8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val toOpen = targetUrl
+                        pendingExternalUrl = null
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(toOpen)))
+                        }.onFailure {
+                            activity.toast("No browser app found")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color.Black),
+                ) {
+                    Text("Open Browser", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingExternalUrl = null }) {
+                    Text("Cancel", color = Color.LightGray)
+                }
+            },
+            containerColor = Color(0xFF1E2430),
+        )
     }
     if (showLangPicker) {
         LanguagePickerDialog(
