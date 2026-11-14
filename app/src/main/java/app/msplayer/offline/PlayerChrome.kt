@@ -1007,6 +1007,8 @@ private fun RotaryEffectKnob(
     onValueChangeFinished: () -> Unit,
 ) {
     val clamped = percent.coerceIn(0, 100)
+    val currentPercent by rememberUpdatedState(clamped)
+    val density = LocalDensity.current
     Column(
         Modifier.alpha(if (enabled) 1f else 0.48f),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1016,27 +1018,24 @@ private fun RotaryEffectKnob(
                 .size(92.dp)
                 .pointerInput(enabled) {
                     if (!enabled) return@pointerInput
-                    var accum = clamped.toFloat()
+                    var dragAccum = 0f
+                    var startVal = 0
+                    val stepPx = with(density) { 2.4.dp.toPx() }
                     detectVerticalDragGestures(
+                        onDragStart = {
+                            startVal = currentPercent
+                            dragAccum = 0f
+                        },
                         onDragEnd = { onValueChangeFinished() },
                         onDragCancel = { onValueChangeFinished() },
                         onVerticalDrag = { change, dragAmount ->
                             change.consume()
-                            accum = (accum - dragAmount / 1.4f).coerceIn(0f, 100f)
-                            onValueChange(accum.roundToInt())
+                            dragAccum -= dragAmount
+                            val deltaPercent = (dragAccum / stepPx).roundToInt()
+                            val next = (startVal + deltaPercent).coerceIn(0, 100)
+                            onValueChange(next)
                         },
                     )
-                }
-                .pointerInput(enabled) {
-                    if (!enabled) return@pointerInput
-                    detectTapGestures { offset ->
-                        val dx = offset.x - size.width / 2f
-                        val dy = offset.y - size.height / 2f
-                        val deg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                        val normalized = ((deg - 135f + 360f) % 360f) / 270f
-                        onValueChange((normalized.coerceIn(0f, 1f) * 100f).roundToInt())
-                        onValueChangeFinished()
-                    }
                 },
             contentAlignment = Alignment.Center,
         ) {

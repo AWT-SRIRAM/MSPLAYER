@@ -2654,7 +2654,7 @@ fun Thumbnail(item: MediaItem, modifier: Modifier, showDuration: Boolean = true)
     var loading by remember(item.uri, revision) { mutableStateOf(true) }
     LaunchedEffect(item.uri, item.size, item.modified, item.added, revision) {
         loading = true
-        bitmap = withTimeoutOrNull(2500L) { Library.thumbnail(context, item) }
+        bitmap = withTimeoutOrNull(5000L) { Library.thumbnail(context, item) }
         loading = false
     }
     Box(
@@ -3746,15 +3746,7 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                                         panY = 0f
                                     }
                                 }, {
-                                    if (!service.state.value.playing) {
-                                        if (!controls) {
-                                            controls = true
-                                        } else {
-                                            service.play()
-                                        }
-                                    } else {
-                                        controls = !controls
-                                    }
+                                    controls = !controls
                                     touched = SystemClock.uptimeMillis()
                                 }, { dragPosition = it }, { value ->
                                     feedbackJob?.cancel()
@@ -4202,9 +4194,6 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                             Spacer(Modifier.width(10.dp))
                             Text("Open (.srt / .zip)")
                         }
-                        if (state.selectedSubtitleTracks.size > 1) {
-                            Badge("${state.selectedSubtitleTracks.size} active", color = Color(0xFF1976D2))
-                        }
                     }
                     val validSubs = state.subtitles.filter { it.first >= 0 }
                     val favLangs = remember(menu) { Store.favoriteSubtitleLanguages(context) }
@@ -4251,12 +4240,12 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                     }
                     Spacer(Modifier.height(6.dp))
                     TextButton(
-                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF64B5F6)),
-                        onClick = { openPlayerMenu("AutoSub") }
+                        colors = ButtonDefaults.textButtonColors(contentColor = Cyan),
+                        onClick = { openPlayerMenu("OnlineSubtitles") }
                     ) {
-                        Icon(Icons.Default.AutoAwesome, null)
+                        Icon(Icons.Default.CloudDownload, null)
                         Spacer(Modifier.width(10.dp))
-                        Text("Auto-Generate (AI)")
+                        Text("Online Subtitles")
                     }
                     val trSrc = remember { MutableInteractionSource() }
                     Row(
@@ -4286,12 +4275,12 @@ fun PlayerScreen(activity: MainActivity, service: PlaybackService, state: Player
                         Icon(Icons.Default.ChevronRight, null, tint = Cyan, modifier = Modifier.size(18.dp))
                     }
                     TextButton(
-                        colors = ButtonDefaults.textButtonColors(contentColor = Cyan),
-                        onClick = { openPlayerMenu("OnlineSubtitles") }
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF64B5F6)),
+                        onClick = { openPlayerMenu("AutoSub") }
                     ) {
-                        Icon(Icons.Default.CloudDownload, null)
+                        Icon(Icons.Default.AutoAwesome, null)
                         Spacer(Modifier.width(10.dp))
-                        Text("Online Subtitles")
+                        Text("Auto-Generate (AI)")
                     }
                     TextButton(
                         colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
@@ -4791,7 +4780,6 @@ fun NativeSubtitleOverlay(
     val context = LocalContext.current
     val style = remember(service, revision) { SubtitleStyle.load(context) }
     var totalDragX by remember { mutableFloatStateOf(0f) }
-    var totalDragY by remember { mutableFloatStateOf(0f) }
     val hasActiveSub = !subtitleText.isNullOrBlank() || !dualLines.primary.isNullOrBlank() || !dualLines.secondary.isNullOrBlank()
 
     Box(
@@ -4809,20 +4797,9 @@ fun NativeSubtitleOverlay(
                                 }
                             } else {
                                 totalDragX += pan.x
-                                totalDragY += pan.y
                                 if (kotlin.math.abs(totalDragX) > 80f) {
                                     service.seekCue(totalDragX > 0)
                                     totalDragX = 0f
-                                }
-                                if (kotlin.math.abs(totalDragY) > 50f) {
-                                    val deltaPercent = (-totalDragY / 25f).toInt()
-                                    val newMargin = (style.bottomMargin + deltaPercent).coerceIn(0, 40)
-                                    if (newMargin != style.bottomMargin) {
-                                        val updated = style.copy(bottomMargin = newMargin)
-                                        updated.save(context)
-                                        service.subtitleStyle(updated)
-                                    }
-                                    totalDragY = 0f
                                 }
                             }
                         }
@@ -4992,158 +4969,152 @@ fun OnlineSubtitlesDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Icon(Icons.Default.CloudDownload, null, tint = Cyan)
+                    Text(
+                        "Online Subtitles",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                // Fixed Search Bar
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("Title / SxxExx", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = { Text("Movie or Series S01E01") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(Icons.Default.Close, "Clear query")
+                                }
+                            }
+                        },
+                    )
+                    val searchSrc = remember { MutableInteractionSource() }
+                    Button(
+                        onClick = { runSearch() },
+                        enabled = !searching,
+                        interactionSource = searchSrc,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .heightIn(min = 48.dp)
+                            .iosLiquidPress(searchSrc, enabled = !searching, scaleDown = 0.93f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                     ) {
-                        Icon(Icons.Default.CloudDownload, null, tint = Cyan)
-                        Text(
-                            "Online Subtitles",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (!movieHash.isNullOrBlank()) {
-                        Badge("Hash", color = Color(0xFF1B5E20))
+                        Text("Search", color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 }
 
+                // Compact Single-Row Filter Strip (Language + Providers)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = false,
+                        onClick = { showLangPicker = true },
+                        label = { Text("🌐 ${selectedLang.label} ▾", fontSize = 11.5.sp, color = Cyan) },
+                    )
+                    FilterChip(
+                        selected = selectedProvider == null,
+                        onClick = { selectedProvider = null },
+                        label = { Text("All (${allCandidates.size})", fontSize = 11.5.sp) },
+                    )
+                    OnlineSubtitlesClient.OnlineProvider.entries.forEach { prov ->
+                        val count = allCandidates.count { it.provider == prov }
+                        FilterChip(
+                            selected = selectedProvider == prov,
+                            onClick = { selectedProvider = if (selectedProvider == prov) null else prov },
+                            label = { Text("${prov.badge} ($count)", fontSize = 11.5.sp) },
+                        )
+                    }
+                }
+
+                // Dedicated Scrollable Candidate List
                 Column(
                     Modifier
-                        .weight(1f, fill = false)
+                        .weight(1f)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            label = { Text("Title / SxxExx", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            placeholder = { Text("Movie or Series S01E01") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                            trailingIcon = {
-                                if (query.isNotEmpty()) {
-                                    IconButton(onClick = { query = "" }) {
-                                        Icon(Icons.Default.Close, "Clear query")
-                                    }
-                                }
-                            },
-                        )
-                        val searchSrc = remember { MutableInteractionSource() }
-                        Button(
-                            onClick = { runSearch() },
-                            enabled = !searching,
-                            interactionSource = searchSrc,
-                            modifier = Modifier
-                                .padding(top = 6.dp)
-                                .heightIn(min = 48.dp)
-                                .iosLiquidPress(searchSrc, enabled = !searching, scaleDown = 0.93f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                        ) {
-                            Text("Search", color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-                        }
-                    }
-
-                    summary?.tmdbMatch?.let { match ->
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Badge(
-                                "TMDB · ${match.title}${match.year?.let { " ($it)" } ?: ""}",
-                                color = Color(0xFF0E4D7A),
-                            )
-                            if (initialHints.season != null && initialHints.episode != null) {
-                                Badge(
-                                    String.format(java.util.Locale.ROOT, "S%02dE%02d", initialHints.season, initialHints.episode),
-                                    color = Color(0xFF283546),
-                                )
-                            }
-                        }
-                    }
-
-                    val chipLanguages = remember(selectedLang, favEpoch) {
-                        val favFilters = Store.favoriteSubtitleLanguages(context).map { OpenSubtitlesClient.filterForLanguage(it) }
-                        (favFilters + selectedLang + OpenSubtitlesClient.languageOptions).distinctBy { it.code3 }
-                    }
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        chipLanguages.forEach { lang ->
-                            FilterChip(
-                                selected = selectedLang.code3 == lang.code3,
-                                onClick = {
-                                    selectedLang = lang
-                                    runSearch(lang = lang)
-                                },
-                                label = { Text(lang.label, fontSize = 12.sp) },
-                            )
-                        }
-                        FilterChip(
-                            selected = false,
-                            onClick = { showLangPicker = true },
-                            label = { Text("More (${SubtitleTranslator.supportedLanguages.size})...", fontSize = 12.sp, color = Cyan) },
-                        )
-                    }
-
-                    if (summary != null) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            FilterChip(
-                                selected = selectedProvider == null,
-                                onClick = { selectedProvider = null },
-                                label = { Text("All (${allCandidates.size})", fontSize = 11.5.sp) },
-                            )
-                            OnlineSubtitlesClient.OnlineProvider.entries.forEach { prov ->
-                                val count = allCandidates.count { it.provider == prov }
-                                if (count > 0 || prov in summary!!.activeProviders) {
-                                    FilterChip(
-                                        selected = selectedProvider == prov,
-                                        onClick = { selectedProvider = if (selectedProvider == prov) null else prov },
-                                        label = { Text("${prov.badge} ($count)", fontSize = 11.5.sp) },
-                                    )
-                                }
-                            }
-                        }
-                    }
-
                     errorMsg?.let { err ->
                         Text(err, color = Color(0xFFFF8A80), fontSize = 12.sp)
                     }
 
                     if (searching) {
                         Row(
-                            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            Modifier.fillMaxWidth().padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Accent)
-                            Text("Searching...", color = Color.White, fontSize = 13.sp)
+                            Text("Searching subtitle providers...", color = Color.White, fontSize = 13.sp)
                         }
-                    } else if (summary != null && visibleCandidates.isEmpty() && errorMsg == null) {
-                        Text("No matches found", color = Muted, fontSize = 12.5.sp)
                     }
 
-                    visibleCandidates.take(35).forEach { cand ->
+                    if (!searching && visibleCandidates.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.05f))
+                                .border(0.8.dp, Cyan.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.OpenInBrowser, null, tint = Cyan, modifier = Modifier.size(20.dp))
+                                    Text("Open External Subtitles", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                                }
+                                Text("Online search returned no files or requires API keys. Open pre-filled web search or community repositories directly.", color = Muted, fontSize = 11.5.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            val url = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
+                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Cyan.copy(alpha = 0.22f), contentColor = Cyan),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text("OpenSubtitles Web", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            val q = java.net.URLEncoder.encode("$query subtitles", "UTF-8")
+                                            val url = "https://github.com/search?q=$q&type=repositories"
+                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.12f), contentColor = Color.White),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text("GitHub Search", fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    visibleCandidates.forEach { cand ->
                         val itemSrc = remember(cand.id) { MutableInteractionSource() }
                         val isBusy = downloadingId == cand.id
                         Row(
@@ -5217,7 +5188,6 @@ fun OnlineSubtitlesDialog(
                                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Badge(cand.provider.badge, color = Color(0xFF283546))
                                     if (cand.language.isNotBlank()) Badge(cand.language, color = Color(0xFF1976D2))
-                                    if (cand.hashMatch) Badge("Hash", color = Color(0xFF2E7D32))
                                     if (cand.hearingImpaired) Badge("HI")
                                     if (cand.downloadCount > 0) Text("${cand.downloadCount} dl", color = Muted, fontSize = 11.sp)
                                 }
@@ -5236,33 +5206,20 @@ fun OnlineSubtitlesDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(
-                            onClick = {
-                                val url = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                }.onFailure {
-                                    activity.toast("No browser app found")
-                                }
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                        ) {
-                            Icon(Icons.Default.OpenInBrowser, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Browser", color = Cyan, fontSize = 12.5.sp, maxLines = 1, softWrap = false)
-                        }
-                        TextButton(
-                            onClick = {
-                                onDismiss()
-                                activity.subtitleFile.launch(arrayOf("*/*"))
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                        ) {
-                            Icon(Icons.Default.FolderZip, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Import", color = Color.White, fontSize = 12.5.sp, maxLines = 1, softWrap = false)
-                        }
+                    TextButton(
+                        onClick = {
+                            val url = OpenSubtitlesClient.browserSearchUrl(query, selectedLang.code3)
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            }.onFailure {
+                                activity.toast("No browser app found")
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) {
+                        Icon(Icons.Default.OpenInBrowser, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Browser Search", color = Cyan, fontSize = 12.5.sp, maxLines = 1, softWrap = false)
                     }
                     TextButton(onClick = onDismiss) {
                         Text("Close", color = Color.LightGray, maxLines = 1, softWrap = false)

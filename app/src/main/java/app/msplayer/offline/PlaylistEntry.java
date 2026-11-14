@@ -1,7 +1,8 @@
 package app.msplayer.offline;
 import androidx.annotation.NonNull;
 import androidx.room.Entity;
-@Entity(tableName="playlist_entries",primaryKeys={"playlist","uri"})
+import androidx.room.Index;
+@Entity(tableName="playlist_entries", primaryKeys={"playlist","uri"}, indices = {@Index("added"), @Index("playlist")})
 public class PlaylistEntry {
     @NonNull public String playlist = "";
     @NonNull public String uri = "";

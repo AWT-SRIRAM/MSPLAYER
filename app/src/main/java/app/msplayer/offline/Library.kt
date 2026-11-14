@@ -154,6 +154,14 @@ object Store {
                             PlayerDatabase::class.java,
                             "player.db",
                         )
+                        .fallbackToDestructiveMigration()
+                        .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                        .addCallback(object : androidx.room.RoomDatabase.Callback() {
+                            override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                                db.execSQL("PRAGMA synchronous = NORMAL")
+                                db.execSQL("PRAGMA temp_store = MEMORY")
+                            }
+                        })
                         .build()
                         .also { instance = it }
             }
@@ -616,43 +624,47 @@ object Library {
                             arrayOf(lastEpoch.toString()),
                             "date_added DESC",
                         )?.use { cursor ->
-                            fun str(name: String) =
-                                cursor.getColumnIndex(name).let {
-                                    if (it >= 0) cursor.getString(it) ?: "" else ""
-                                }
-                            fun num(name: String) =
-                                cursor.getColumnIndex(name).let {
-                                    if (it >= 0) cursor.getLong(it) else 0L
-                                }
+                            val dataCol = cursor.getColumnIndex("_data")
+                            val isPendingCol = if (android.os.Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex("is_pending") else -1
+                            val idCol = cursor.getColumnIndex("_id")
+                            val relPathCol = if (android.os.Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex("relative_path") else -1
+                            val nameCol = cursor.getColumnIndex("_display_name")
+                            val sizeCol = cursor.getColumnIndex("_size")
+                            val durCol = cursor.getColumnIndex("duration")
+                            val widthCol = cursor.getColumnIndex("width")
+                            val heightCol = cursor.getColumnIndex("height")
+                            val addedCol = cursor.getColumnIndex("date_added")
+                            val modifiedCol = cursor.getColumnIndex("date_modified")
                             while (cursor.moveToNext()) {
-                                val dataPath = str("_data")
-                                val isPending = if (android.os.Build.VERSION.SDK_INT >= 29) num("is_pending") == 1L else false
+                                val dataPath = if (dataCol >= 0) cursor.getString(dataCol) ?: "" else ""
+                                val isPending = if (isPendingCol >= 0) cursor.getLong(isPendingCol) == 1L else false
                                 val directFile = if (dataPath.isNotBlank()) java.io.File(dataPath) else null
                                 val itemUri = if (isPending && directFile?.canRead() == true) {
                                     Uri.fromFile(directFile).toString()
                                 } else {
-                                    ContentUris.withAppendedId(base, num("_id")).toString()
+                                    val id = if (idCol >= 0) cursor.getLong(idCol) else 0L
+                                    ContentUris.withAppendedId(base, id).toString()
                                 }
                                 val folder =
-                                    if (android.os.Build.VERSION.SDK_INT >= 29)
-                                        str("relative_path").trimEnd('/').ifBlank { "Storage" }
+                                    if (relPathCol >= 0)
+                                        (cursor.getString(relPathCol) ?: "").trimEnd('/').ifBlank { "Storage" }
                                     else
-                                        str("_data")
+                                        dataPath
                                             .substringBeforeLast('/')
                                             .substringAfterLast('/')
                                             .ifBlank { "Storage" }
                                 updated +=
                                     MediaItem(
                                         itemUri,
-                                        str("_display_name"),
+                                        if (nameCol >= 0) cursor.getString(nameCol) ?: "" else "",
                                         folder,
-                                        num("_size"),
-                                        num("duration"),
-                                        num("width").toInt(),
-                                        num("height").toInt(),
-                                        num("date_added"),
+                                        if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L,
+                                        if (durCol >= 0) cursor.getLong(durCol) else 0L,
+                                        if (widthCol >= 0) cursor.getLong(widthCol).toInt() else 0,
+                                        if (heightCol >= 0) cursor.getLong(heightCol).toInt() else 0,
+                                        if (addedCol >= 0) cursor.getLong(addedCol) else 0L,
                                         audio,
-                                        num("date_modified"),
+                                        if (modifiedCol >= 0) cursor.getLong(modifiedCol) else 0L,
                                     )
                             }
                         }
@@ -713,28 +725,32 @@ object Library {
                 try {
                     queryCursorWithPending(context, base, projection.toTypedArray(), null, null, "date_added DESC")
                         ?.use { cursor ->
-                            fun str(name: String) =
-                                cursor.getColumnIndex(name).let {
-                                    if (it >= 0) cursor.getString(it) ?: "" else ""
-                                }
-                            fun num(name: String) =
-                                cursor.getColumnIndex(name).let {
-                                    if (it >= 0) cursor.getLong(it) else 0L
-                                }
+                            val dataCol = cursor.getColumnIndex("_data")
+                            val isPendingCol = if (android.os.Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex("is_pending") else -1
+                            val idCol = cursor.getColumnIndex("_id")
+                            val relPathCol = if (android.os.Build.VERSION.SDK_INT >= 29) cursor.getColumnIndex("relative_path") else -1
+                            val nameCol = cursor.getColumnIndex("_display_name")
+                            val sizeCol = cursor.getColumnIndex("_size")
+                            val durCol = cursor.getColumnIndex("duration")
+                            val widthCol = cursor.getColumnIndex("width")
+                            val heightCol = cursor.getColumnIndex("height")
+                            val addedCol = cursor.getColumnIndex("date_added")
+                            val modifiedCol = cursor.getColumnIndex("date_modified")
                             while (cursor.moveToNext()) {
-                                val dataPath = str("_data")
-                                val isPending = if (android.os.Build.VERSION.SDK_INT >= 29) num("is_pending") == 1L else false
+                                val dataPath = if (dataCol >= 0) cursor.getString(dataCol) ?: "" else ""
+                                val isPending = if (isPendingCol >= 0) cursor.getLong(isPendingCol) == 1L else false
                                 val directFile = if (dataPath.isNotBlank()) java.io.File(dataPath) else null
                                 val itemUri = if (isPending && directFile?.canRead() == true) {
                                     Uri.fromFile(directFile).toString()
                                 } else {
-                                    ContentUris.withAppendedId(base, num("_id")).toString()
+                                    val id = if (idCol >= 0) cursor.getLong(idCol) else 0L
+                                    ContentUris.withAppendedId(base, id).toString()
                                 }
-                                val title = str("_display_name")
-                                val size = num("_size")
+                                val title = if (nameCol >= 0) cursor.getString(nameCol) ?: "" else ""
+                                val size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
                                 val folder =
-                                    if (android.os.Build.VERSION.SDK_INT >= 29)
-                                        str("relative_path").trimEnd('/').ifBlank { "Storage" }
+                                    if (relPathCol >= 0)
+                                        (cursor.getString(relPathCol) ?: "").trimEnd('/').ifBlank { "Storage" }
                                     else
                                         dataPath
                                             .substringBeforeLast('/')
@@ -748,12 +764,12 @@ object Library {
                                         title,
                                         folder,
                                         size,
-                                        num("duration"),
-                                        num("width").toInt(),
-                                        num("height").toInt(),
-                                        num("date_added"),
+                                        if (durCol >= 0) cursor.getLong(durCol) else 0L,
+                                        if (widthCol >= 0) cursor.getLong(widthCol).toInt() else 0,
+                                        if (heightCol >= 0) cursor.getLong(heightCol).toInt() else 0,
+                                        if (addedCol >= 0) cursor.getLong(addedCol) else 0L,
                                         audio,
-                                        num("date_modified"),
+                                        if (modifiedCol >= 0) cursor.getLong(modifiedCol) else 0L,
                                     )
                             }
                         }
@@ -842,8 +858,8 @@ object Library {
             thumbSlots.withPermit {
                 var bitmap = withContext(Dispatchers.IO) {
                     val directory = java.io.File(context.cacheDir, "video-thumbnails-v5").apply { mkdirs() }
-                    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
-                    val disk = java.io.File(directory, "$digest.jpg")
+                    val fileKey = "th_" + (key.hashCode().toLong() and 0xFFFFFFFFL).toString(16) + "_" + (item.uri.hashCode().toLong() and 0xFFFFFFFFL).toString(16)
+                    val disk = java.io.File(directory, "$fileKey.jpg")
                     val foundDisk = if (disk.isFile && disk.length() > 0) android.graphics.BitmapFactory.decodeFile(disk.path) else null
                     if (foundDisk != null && !isDark(foundDisk)) return@withContext foundDisk
 
@@ -865,7 +881,7 @@ object Library {
                     }
 
                     if (found == null || isDark(found)) {
-                        val fallback = kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                        val fallback = kotlinx.coroutines.withTimeoutOrNull(2500L) {
                             val retriever = MediaMetadataRetriever()
                             try {
                                 val parsed = Uri.parse(item.uri)
@@ -885,19 +901,23 @@ object Library {
                                 val sourceH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.coerceAtLeast(1) ?: 135
                                 val outW = if (sourceW >= sourceH) 320 else (320f * sourceW / sourceH).toInt().coerceAtLeast(1)
                                 val outH = if (sourceH >= sourceW) 320 else (320f * sourceH / sourceW).toInt().coerceAtLeast(1)
-                                val times = listOf((duration / 10).coerceIn(1000, 30000), 3000L, 5000L, 1000L).distinct()
-                                var extracted: Bitmap? = null
-                                for (time in times) {
-                                    currentCoroutineContext().ensureActive()
-                                    val frame = if (android.os.Build.VERSION.SDK_INT >= 27)
-                                        retriever.getScaledFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
-                                    else retriever.getFrameAtTime(time * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
+                                val firstTime = if (duration > 0) minOf(2000L, duration / 10) else 1500L
+                                val frame = if (android.os.Build.VERSION.SDK_INT >= 27)
+                                    retriever.getScaledFrameAtTime(firstTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
+                                else retriever.getFrameAtTime(firstTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
+                                    Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
+                                }
+                                if (frame != null && !isDark(frame)) {
+                                    frame
+                                } else {
+                                    val retryTime = if (duration > 5000) 4000L else 1000L
+                                    val fallbackFrame = if (android.os.Build.VERSION.SDK_INT >= 27)
+                                        retriever.getScaledFrameAtTime(retryTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
+                                    else retriever.getFrameAtTime(retryTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
                                         Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
                                     }
-                                    if (frame != null && !isDark(frame)) { extracted = frame; break }
-                                    if (frame != null && extracted == null) { extracted = frame }
+                                    fallbackFrame ?: frame
                                 }
-                                extracted
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (_: Exception) {
@@ -917,15 +937,12 @@ object Library {
                     thumbs.put(key, bitmap)
                     withContext(Dispatchers.IO) {
                         val directory = java.io.File(context.cacheDir, "video-thumbnails-v5").apply { mkdirs() }
-                        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
-                        val target = java.io.File(directory, "$digest.jpg")
+                        val fileKey = "th_" + (key.hashCode().toLong() and 0xFFFFFFFFL).toString(16) + "_" + (item.uri.hashCode().toLong() and 0xFFFFFFFFL).toString(16)
+                        val target = java.io.File(directory, "$fileKey.jpg")
                         runCatching {
-                            val temp = java.io.File(directory, "$digest.tmp")
+                            val temp = java.io.File(directory, "$fileKey.tmp")
                             temp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
                             if (!temp.renameTo(target)) temp.delete()
-                            val files = directory.listFiles()?.filter { it.extension == "jpg" }?.sortedByDescending { it.lastModified() }.orEmpty()
-                            var total = 0L
-                            files.forEach { total += it.length(); if (total > 48 * 1024 * 1024) it.delete() }
                         }
                     }
                 } else {

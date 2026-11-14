@@ -137,7 +137,8 @@ class PlaybackService : Service() {
         audioEffects.apply(player, settings)
         applyVolume()
         bindPlayerEvents()
-        videoLayout?.takeIf { !surfaceSuspended }?.let { player.attachViews(it, null, true, false) }
+        val useTexture = Store.prefs(this).getBoolean("use_texture_view", false)
+        videoLayout?.takeIf { !surfaceSuspended }?.let { player.attachViews(it, null, useTexture, false) }
         openCurrent(prior.position, restore = false, keepSubtitleChoice = true)
     }
 
@@ -406,7 +407,8 @@ class PlaybackService : Service() {
 
         fun performAttachAndRedraw() {
             if (released || surfaceSuspended) return
-            player.attachViews(layout, null, true, false)
+            val useTexture = Store.prefs(this@PlaybackService).getBoolean("use_texture_view", false)
+            player.attachViews(layout, null, useTexture, false)
             videoAttached = true
             layout.post {
                 if (!released && !surfaceSuspended) {
@@ -463,7 +465,8 @@ class PlaybackService : Service() {
         if (released) return
         videoLayout = layout
         surfaceSuspended = false
-        player.attachViews(layout, null, true, false)
+        val useTexture = Store.prefs(this).getBoolean("use_texture_view", false)
+        player.attachViews(layout, null, useTexture, false)
         layout.findViewById<android.view.SurfaceView>(org.videolan.R.id.surface_subtitles)
             ?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSubtitlePlacement(controlsVisible) }
         videoAttached = true
@@ -640,6 +643,11 @@ class PlaybackService : Service() {
         arrayListOf(
             "--no-video-title-show",
             "--audio-time-stretch",
+            "--file-caching=1500",
+            "--network-caching=2000",
+            "--codec=mediacodec_ndk,mediacodec_jni,all",
+            "--avcodec-threads=0",
+            "--avcodec-fast",
             // Native surfaces keep text subtitles independently positionable.
             // GLES remains available for projections the Android output cannot handle.
             "--vout=android-display,android-opaque,gles2",
@@ -770,6 +778,7 @@ class PlaybackService : Service() {
                         decoderMode = "Software"
                         openCurrent(state.value.position, false)
                     } else {
+                        decoderMode = Store.prefs(this).getString("decoder", "Auto") ?: "Auto"
                         Library.videoPlaybackActive.value = false
                         clearSeek()
                         val itemUri = state.value.item?.uri ?: ""
@@ -2230,7 +2239,8 @@ class PlaybackService : Service() {
         audioEffects.apply(player, effectSettings.value)
         applyVolume()
         bindPlayerEvents()
-        videoLayout?.takeIf { !surfaceSuspended }?.let { player.attachViews(it, null, true, false) }
+        val useTexture = Store.prefs(this).getBoolean("use_texture_view", false)
+        videoLayout?.takeIf { !surfaceSuspended }?.let { player.attachViews(it, null, useTexture, false) }
         openCurrent(prior.position, restore = false, keepSubtitleChoice = true)
     }
 
