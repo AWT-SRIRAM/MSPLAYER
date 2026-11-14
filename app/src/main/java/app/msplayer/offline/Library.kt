@@ -374,9 +374,14 @@ object Library {
     fun retryThumbnails() { thumbs.evictAll(); failedThumbs.evictAll(); thumbnailRevision.value++ }
 
     suspend fun folderThumbnail(context: Context, folder: MediaFolder): Bitmap? {
-        val rep = folder.items.filter { !it.audio }.maxByOrNull { it.added.takeIf { a -> a > 0 } ?: it.modified }
-            ?: folder.items.firstOrNull { !it.audio } ?: return null
-        return thumbnail(context, rep)
+        val candidates = folder.items.filter { !it.audio }.sortedByDescending { it.added.takeIf { a -> a > 0 } ?: it.modified }
+        android.util.Log.i("MSPLAYER_THUMB", "folderThumbnail for ${folder.name}: candidates=${candidates.size}")
+        for (item in candidates.take(6)) {
+            val thumb = thumbnail(context, item)
+            android.util.Log.i("MSPLAYER_THUMB", "folderThumbnail ${folder.name} checked ${item.title}: success=${thumb != null}")
+            if (thumb != null) return thumb
+        }
+        return null
     }
     private suspend fun awaitIdle() { videoPlaybackActive.first { !it } }
     private val metadata = LruCache<String, MediaInfo>(1024)
@@ -863,6 +868,7 @@ object Library {
                     if (foundDisk != null && !isDark(foundDisk)) return@withContext foundDisk
 
                     var found: Bitmap? = null
+                    var candidateThumb: Bitmap? = null
                     if (android.os.Build.VERSION.SDK_INT >= 29) {
                         val signal = android.os.CancellationSignal()
                         val cancellation = currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { signal.cancel() }
@@ -871,8 +877,11 @@ object Library {
                             val mediaStoreThumb = runCatching {
                                 context.contentResolver.loadThumbnail(parsed, android.util.Size(320, 180), signal)
                             }.getOrNull()
-                            if (mediaStoreThumb != null && !isDark(mediaStoreThumb)) {
-                                found = mediaStoreThumb
+                            if (mediaStoreThumb != null) {
+                                candidateThumb = mediaStoreThumb
+                                if (!isDark(mediaStoreThumb)) {
+                                    found = mediaStoreThumb
+                                }
                             }
                         } finally {
                             cancellation?.dispose()
@@ -890,33 +899,65 @@ object Library {
                                     MediaStore.Video.Thumbnails.MINI_KIND,
                                     null,
                                 )
-                                if (msThumb != null && !isDark(msThumb)) {
-                                    found = msThumb
+                                if (msThumb != null) {
+                                    if (candidateThumb == null) candidateThumb = msThumb
+                                    if (!isDark(msThumb)) {
+                                        found = msThumb
+                                    }
                                 }
                             }
                         }
                     }
 
+                    val ext = PlaybackRules.mediaExtension(item.title).lowercase(Locale.ROOT)
+                    val isMatroska = ext in listOf("mkv", "webm", "m4v")
+
+                    if (isMatroska && (found == null || isDark(found))) {
+                        android.util.Log.i("MSPLAYER_THUMB", "Calling NativeThumbnail.read for Matroska item: ${item.title}")
+                        val vlcFrame = kotlinx.coroutines.withTimeoutOrNull(4500L) {
+                            runCatching { NativeThumbnail.read(context, item) }.getOrNull()
+                        }
+                        if (vlcFrame != null && !isDark(vlcFrame)) {
+                            found = vlcFrame
+                        } else if (found == null && vlcFrame != null) {
+                            found = vlcFrame
+                        }
+                    }
+
                     if (found == null || isDark(found)) {
-                        val fallback = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                        val fallback = kotlinx.coroutines.withTimeoutOrNull(2000L) {
                             val retriever = MediaMetadataRetriever()
                             var pfd: android.os.ParcelFileDescriptor? = null
                             try {
                                 val parsed = Uri.parse(item.uri)
                                 val directFile = if (parsed.scheme == "file") java.io.File(parsed.path ?: "")
                                     else findPhysicalMediaFile(item) ?: resolvePathFile(context, parsed, item)
+                                var sourceSet = false
                                 if (directFile != null && directFile.canRead()) {
-                                    retriever.setDataSource(directFile.absolutePath)
-                                } else if (parsed.scheme == "content") {
-                                    pfd = runCatching { context.contentResolver.openFileDescriptor(parsed, "r") }.getOrNull()
-                                    if (pfd != null) {
-                                        retriever.setDataSource(pfd.fileDescriptor)
-                                    } else {
-                                        retriever.setDataSource(context, parsed)
+                                    runCatching {
+                                        retriever.setDataSource(directFile.absolutePath)
+                                        sourceSet = true
                                     }
-                                } else {
-                                    retriever.setDataSource(context, parsed)
                                 }
+                                if (!sourceSet) {
+                                    if (parsed.scheme == "content") {
+                                        pfd = runCatching { context.contentResolver.openFileDescriptor(parsed, "r") }.getOrNull()
+                                        if (pfd != null) {
+                                            runCatching {
+                                                retriever.setDataSource(pfd.fileDescriptor)
+                                                sourceSet = true
+                                            }
+                                        }
+                                    }
+                                }
+                                if (!sourceSet) {
+                                    runCatching {
+                                        retriever.setDataSource(context, parsed)
+                                        sourceSet = true
+                                    }
+                                }
+                                if (!sourceSet) return@withTimeoutOrNull null
+
                                 val duration = item.duration.takeIf { it > 0 }
                                     ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
                                     ?: 0L
@@ -924,22 +965,33 @@ object Library {
                                 val sourceH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()?.coerceAtLeast(1) ?: 135
                                 val outW = if (sourceW >= sourceH) 320 else (320f * sourceW / sourceH).toInt().coerceAtLeast(1)
                                 val outH = if (sourceH >= sourceW) 320 else (320f * sourceH / sourceW).toInt().coerceAtLeast(1)
-                                val firstTime = if (duration > 0) minOf(2000L, duration / 10) else 1500L
-                                val frame = if (android.os.Build.VERSION.SDK_INT >= 27)
-                                    retriever.getScaledFrameAtTime(firstTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
-                                else retriever.getFrameAtTime(firstTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
-                                    Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
+
+                                fun extractFrame(timeMs: Long): Bitmap? {
+                                    val timeUs = if (timeMs >= 0) timeMs * 1000L else -1L
+                                    var bmp: Bitmap? = null
+                                    if (android.os.Build.VERSION.SDK_INT >= 27 && timeUs >= 0) {
+                                        bmp = runCatching {
+                                            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
+                                        }.getOrNull()
+                                    }
+                                    if (bmp == null) {
+                                        bmp = runCatching {
+                                            if (timeUs >= 0) retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                            else retriever.frameAtTime
+                                        }.getOrNull()?.let { original ->
+                                            Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
+                                        }
+                                    }
+                                    return bmp
                                 }
+
+                                val firstTime = if (duration > 0) minOf(2000L, duration / 10) else 1000L
+                                var frame = extractFrame(firstTime)
                                 if (frame != null && !isDark(frame)) {
                                     frame
                                 } else {
-                                    val retryTime = if (duration > 5000) 4000L else 1000L
-                                    val fallbackFrame = if (android.os.Build.VERSION.SDK_INT >= 27)
-                                        retriever.getScaledFrameAtTime(retryTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, outW, outH)
-                                    else retriever.getFrameAtTime(retryTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { original ->
-                                        Bitmap.createScaledBitmap(original, outW, outH, true).also { if (it !== original) original.recycle() }
-                                    }
-                                    fallbackFrame ?: frame
+                                    val defaultFrame = extractFrame(-1L)
+                                    defaultFrame ?: frame
                                 }
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
@@ -953,6 +1005,20 @@ object Library {
                         if (fallback != null) {
                             found = fallback
                         }
+                    }
+                    if (found == null || isDark(found)) {
+                        android.util.Log.i("MSPLAYER_THUMB", "Calling NativeThumbnail.read as fallback for item: ${item.title}")
+                        val vlcFrame = kotlinx.coroutines.withTimeoutOrNull(4500L) {
+                            runCatching { NativeThumbnail.read(context, item) }.getOrNull()
+                        }
+                        if (vlcFrame != null && !isDark(vlcFrame)) {
+                            found = vlcFrame
+                        } else if (found == null && vlcFrame != null) {
+                            found = vlcFrame
+                        }
+                    }
+                    if (found == null && candidateThumb != null) {
+                        found = candidateThumb
                     }
                     found
                 }
@@ -970,6 +1036,7 @@ object Library {
                         }
                     }
                 }
+                android.util.Log.i("MSPLAYER_THUMB", "thumbnail for ${item.title}: result=${bitmap != null}")
                 bitmap
             }
         }

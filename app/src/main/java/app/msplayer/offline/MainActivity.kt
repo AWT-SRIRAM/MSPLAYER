@@ -2649,12 +2649,12 @@ fun Badge(text: String, color: Color = Color(0xFF42464D), textColor: Color = Col
 fun Thumbnail(item: MediaItem, modifier: Modifier, showDuration: Boolean = true) {
     val context = LocalContext.current
     val palette = LocalAppPalette.current
-    var bitmap by remember(item.uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
     val revision by Library.thumbnailRevision.collectAsState()
+    var bitmap by remember(item.uri, revision) { mutableStateOf<android.graphics.Bitmap?>(null) }
     var loading by remember(item.uri, revision) { mutableStateOf(true) }
     LaunchedEffect(item.uri, item.size, item.modified, item.added, revision) {
         loading = true
-        bitmap = withTimeoutOrNull(5000L) { Library.thumbnail(context, item) }
+        bitmap = withTimeoutOrNull(8000L) { Library.thumbnail(context, item) }
         loading = false
     }
     Box(
@@ -2694,9 +2694,10 @@ fun Thumbnail(item: MediaItem, modifier: Modifier, showDuration: Boolean = true)
 fun FolderThumbnail(entry: MediaFolder, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val palette = LocalAppPalette.current
-    var bitmap by remember(entry.name, entry.items.size) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(entry.name, entry.items.size) {
-        bitmap = withTimeoutOrNull(2500L) { Library.folderThumbnail(context, entry) }
+    val revision by Library.thumbnailRevision.collectAsState()
+    var bitmap by remember(entry.name, entry.items.size, revision) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(entry.name, entry.items.size, revision) {
+        bitmap = withTimeoutOrNull(15000L) { Library.folderThumbnail(context, entry) }
     }
     Box(
         modifier.clip(RoundedCornerShape(6.dp)).background(if (palette.isLight) Color(0xFFDCE3EE) else Color(0xFF1E232B)),
@@ -2977,6 +2978,7 @@ fun SettingsScreen(activity: MainActivity, onSettingsChanged: () -> Unit = {}) {
     var showAdditional by remember { mutableStateOf(false) }
     var showFavAudioLangs by remember { mutableStateOf(false) }
     var showFavSubLangs by remember { mutableStateOf(false) }
+    var pendingGithubRedirect by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     key(epoch) {
         LazyColumn(
@@ -3108,11 +3110,7 @@ fun SettingsScreen(activity: MainActivity, onSettingsChanged: () -> Unit = {}) {
                             .clip(RoundedCornerShape(10.dp))
                             .iosLiquidPress(ghSrc, scaleDown = 0.98f)
                             .clickable(interactionSource = ghSrc, indication = ripple()) {
-                                runCatching {
-                                    activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(MSPLAYER_GITHUB_URL)))
-                                }.onFailure {
-                                    activity.toast("No browser app found.")
-                                }
+                                pendingGithubRedirect = true
                             }
                             .padding(vertical = 8.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -3146,6 +3144,59 @@ fun SettingsScreen(activity: MainActivity, onSettingsChanged: () -> Unit = {}) {
                 }
             }
         }
+    }
+    if (pendingGithubRedirect) {
+        AlertDialog(
+            onDismissRequest = { pendingGithubRedirect = false },
+            title = {
+                Text(
+                    "Open GitHub Repository?",
+                    color = palette.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "You will be redirected to the official repository by SRIRAM S & ANTIGRAVITY in your browser:",
+                        color = palette.textSecondary,
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        MSPLAYER_GITHUB_URL,
+                        color = palette.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(palette.cardFallback, RoundedCornerShape(6.dp))
+                            .padding(8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingGithubRedirect = false
+                        runCatching {
+                            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(MSPLAYER_GITHUB_URL)))
+                        }.onFailure {
+                            activity.toast("No browser app found.")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = Color.White),
+                ) {
+                    Text("Open in Browser", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingGithubRedirect = false }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            },
+            containerColor = palette.surface,
+        )
     }
     if (showAdditional) {
         AdditionalSettingsDialog(
@@ -3390,6 +3441,7 @@ private fun OpenSourceLicensesDialog(
     val palette = LocalAppPalette.current
     var showFullTexts by remember { mutableStateOf(false) }
     var licenseChoice by remember { mutableStateOf("Notices") }
+    var pendingGithubRedirect by remember { mutableStateOf(false) }
     val licenseText by produceState("", showFullTexts, licenseChoice) {
         if (showFullTexts) {
             value = withContext(Dispatchers.IO) {
@@ -3474,11 +3526,7 @@ private fun OpenSourceLicensesDialog(
                         .background(palette.accent.copy(alpha = 0.12f))
                         .border(0.8.dp, palette.accent.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
                         .clickable {
-                            runCatching {
-                                activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(MSPLAYER_GITHUB_URL)))
-                            }.onFailure {
-                                activity.toast("No browser app found.")
-                            }
+                            pendingGithubRedirect = true
                         }
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -3564,6 +3612,59 @@ private fun OpenSourceLicensesDialog(
             }
         },
     )
+    if (pendingGithubRedirect) {
+        AlertDialog(
+            onDismissRequest = { pendingGithubRedirect = false },
+            title = {
+                Text(
+                    "Open GitHub Repository?",
+                    color = palette.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "You will be redirected to the official repository by SRIRAM S & ANTIGRAVITY in your browser:",
+                        color = palette.textSecondary,
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        MSPLAYER_GITHUB_URL,
+                        color = palette.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(palette.cardFallback, RoundedCornerShape(6.dp))
+                            .padding(8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingGithubRedirect = false
+                        runCatching {
+                            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(MSPLAYER_GITHUB_URL)))
+                        }.onFailure {
+                            activity.toast("No browser app found.")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = Color.White),
+                ) {
+                    Text("Open in Browser", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingGithubRedirect = false }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            },
+            containerColor = palette.surface,
+        )
+    }
 }
 
 @Composable
